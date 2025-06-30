@@ -13,8 +13,8 @@ use rinex::{
 };
 
 use gnss_rtk::prelude::{
-    AbsoluteTime, Bias, Candidate, Carrier as RTKCarrier, ClockProfile,
-    EphemerisSource as RTKEphemerisSource, Method, Observation, OrbitSource, Solver,
+    AbsoluteTime, Candidate, Carrier as RTKCarrier, ClockProfile, EnvironmentalBias,
+    EphemerisSource as RTKEphemerisSource, Method, Observation, OrbitSource, Solver, SpacebornBias,
     UserParameters, UserProfile, SPEED_OF_LIGHT_M_S,
 };
 
@@ -89,7 +89,8 @@ pub fn resolve<
     CK: ClockStateProvider,
     EPH: RTKEphemerisSource,
     O: OrbitSource,
-    B: Bias,
+    SB: SpacebornBias,
+    EB: EnvironmentalBias,
     T: AbsoluteTime,
 >(
     ctx: &Context,

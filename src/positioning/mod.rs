@@ -51,16 +51,17 @@ use rinex::{
 use gnss_qc::prelude::QcExtraPage;
 
 use gnss_rtk::prelude::{
-    Bias, BiasRuntime, Carrier as RTKCarrier, ClockProfile, Config, Duration,
+    BiasRuntime, Carrier as RTKCarrier, ClockProfile, Config, Duration, EnvironmentalBias,
     Ephemeris as RTKEphemerisData, EphemerisSource as RTKEphemeris, Epoch, Error as RTKError,
-    KbModel, Method, Solver, TroposphereModel, UserParameters, UserProfile, SV,
+    KbModel, Method, SatelliteClockCorrection, Solver, SpacebornBias, TroposphereModel,
+    UserParameters, UserProfile, SV,
 };
 
 use thiserror::Error;
 
-struct BiasModel {}
+struct EnvironmentalBiases {}
 
-impl Bias for BiasModel {
+impl EnvironmentalBias for EnvironmentalBiases {
     fn ionosphere_bias_m(&self, _: &BiasRuntime) -> f64 {
         0.0
     }
@@ -355,8 +356,8 @@ If your dataset does not describe one, you can manually describe one, see --help
         }
     }
 
-    let bias_model = BiasModel {};
     let null_eph = NullEphemeris {};
+    let env_biases = EnvironmentalBiases {};
 
     let apriori = ctx.rx_orbit;
 
@@ -374,8 +375,9 @@ If your dataset does not describe one, you can manually describe one, see --help
         cfg.clone(),
         null_eph.into(),
         orbits.into(),
+        spaceborn_biases.into(),
+        env_biases.into(),
         time,
-        bias_model,
         apriori_ecef_m,
     );
 

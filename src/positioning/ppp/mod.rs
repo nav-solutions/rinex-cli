@@ -20,8 +20,9 @@ pub use report::Report;
 pub mod post_process;
 
 use gnss_rtk::prelude::{
-    AbsoluteTime, Bias, Candidate, ClockProfile, EphemerisSource as RTKEphemerisSource, Epoch,
-    Observation, OrbitSource, PVTSolution, Solver, UserParameters, UserProfile,
+    AbsoluteTime, Candidate, ClockProfile, EnvironmentalBias,
+    EphemerisSource as RTKEphemerisSource, Epoch, Observation, OrbitSource, PVTSolution, Solver,
+    SpacebornBias, UserParameters, UserProfile,
 };
 
 pub fn resolve<
@@ -30,7 +31,8 @@ pub fn resolve<
     CK: ClockStateProvider,
     EPH: RTKEphemerisSource,
     O: OrbitSource,
-    B: Bias,
+    SB: SpacebornBias,
+    EB: EnvironmentalBias,
     T: AbsoluteTime,
 >(
     ctx: &Context,
