@@ -30,16 +30,16 @@ pub fn resolve<
     'b,
     CK: ClockStateProvider,
     EPH: RTKEphemerisSource,
-    O: OrbitSource,
+    ORB: OrbitSource,
     SB: SpacebornBias,
     EB: EnvironmentalBias,
-    T: AbsoluteTime,
+    TIM: AbsoluteTime,
 >(
     ctx: &Context,
     eph: &'a RefCell<EphemerisSource<'b>>,
     params: UserParameters,
     mut clock: CK,
-    mut solver: Solver<EPH, O, B, T>,
+    mut solver: Solver<EPH, ORB, EB, SB, TIM>,
 ) -> BTreeMap<Epoch, PVTSolution> {
     let mut past_epoch = Option::<Epoch>::None;
 
