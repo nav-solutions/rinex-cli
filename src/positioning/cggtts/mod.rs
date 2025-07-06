@@ -1,5 +1,7 @@
 //! CGGTTS special resolution opmode.
-use std::{cell::RefCell, collections::HashMap};
+use std::collections::HashMap;
+
+use std::cell::{RefCell, RefMut};
 
 mod post_process;
 pub use post_process::post_process;
@@ -14,8 +16,8 @@ use rinex::{
 
 use gnss_rtk::prelude::{
     AbsoluteTime, Candidate, Carrier as RTKCarrier, ClockProfile, EnvironmentalBias,
-    EphemerisSource as RTKEphemerisSource, Method, Observation, OrbitSource, Solver, SpacebornBias,
-    UserParameters, UserProfile, SPEED_OF_LIGHT_M_S,
+    EphemerisSource, Method, Observation, OrbitSource, Solver, SpacebornBias, UserParameters,
+    UserProfile, SPEED_OF_LIGHT_M_S,
 };
 
 use cggtts::prelude::{
@@ -24,9 +26,7 @@ use cggtts::prelude::{
 
 use crate::{
     cli::Context,
-    positioning::{
-        cast_rtk_carrier, ClockStateProvider, EphemerisSource, Error as PositioningError,
-    },
+    positioning::{cast_rtk_carrier, EphemerisBuffer, Error as PositioningError},
 };
 
 fn rinex_ref_observable(
@@ -86,19 +86,17 @@ fn rinex_ref_observable(
 pub fn resolve<
     'a,
     'b,
-    CK: ClockStateProvider,
-    EPH: RTKEphemerisSource,
+    EPH: EphemerisSource,
     ORB: OrbitSource,
-    SB: SpacebornBias,
     EB: EnvironmentalBias,
+    SB: SpacebornBias,
     TIM: AbsoluteTime,
 >(
     ctx: &Context,
-    eph: &'a RefCell<EphemerisSource<'b>>,
-    params: UserParameters,
-    mut clock: CK,
-    mut solver: Solver<EPH, ORB, EB, SB, TIM>,
     method: Method,
+    params: UserParameters,
+    mut solver: Solver<EPH, ORB, EB, SB, TIM>,
+    ephemeris_buffer: RefMut<EphemerisBuffer<'a>>,
 ) -> Result<Vec<Track>, PositioningError> {
     let obs_data = ctx
         .data
@@ -138,8 +136,8 @@ pub fn resolve<
 
     let mut release = false;
 
-    for (index, (t, signal)) in obs_data.signal_observations_sampling_ok_iter().enumerate() {
-        if index > 0 && t > past_t {
+    for (index, (epoch, signal)) in obs_data.signal_observations_sampling_ok_iter().enumerate() {
+        if index > 0 && epoch > past_t {
             if collecting {
                 info!("{} - new epoch", past_t);
                 for (sv, observations) in sv_observations.iter() {
@@ -147,17 +145,17 @@ pub fn resolve<
                     let mut cd = Candidate::new(*sv, past_t, observations.clone());
 
                     // fixup and customizations
-                    match clock.next_clock_at(past_t, *sv) {
-                        Some(dt) => cd.set_clock_correction(dt),
-                        None => error!("{} ({}) - no clock correction available", past_t, *sv),
-                    }
+                    // match clock.next_clock_at(past_t, *sv) {
+                    //     Some(dt) => cd.set_clock_correction(dt),
+                    //     None => error!("{} ({}) - no clock correction available", past_t, *sv),
+                    // }
 
-                    if let Some((_, _, eph)) = eph.borrow_mut().select(past_t, *sv) {
-                        if let Some(tgd) = eph.tgd() {
-                            debug!("{} ({}) - tgd: {}", past_t, *sv, tgd);
-                            cd.set_group_delay(tgd);
-                        }
-                    }
+                    // if let Some((_, _, eph)) = eph.borrow_mut().select(past_t, *sv) {
+                    //     if let Some(tgd) = eph.tgd() {
+                    //         debug!("{} ({}) - tgd: {}", past_t, *sv, tgd);
+                    //         cd.set_group_delay(tgd);
+                    //     }
+                    // }
 
                     candidates.push(cd);
                 }
@@ -174,7 +172,7 @@ pub fn resolve<
                     }
                 }
 
-                match solver.ppp_solving(past_t, params, &candidates) {
+                match solver.ppp(past_t, params, &candidates) {
                     Ok(pvt) => {
                         for sv_contrib in pvt.sv.iter() {
                             let (azim_deg, elev_deg) =
@@ -257,11 +255,12 @@ pub fn resolve<
         if carrier.is_err() {
             error!(
                 "{}({}/{}) - unknown signal {:?}",
-                t,
+                epoch,
                 signal.sv.constellation,
                 signal.observable,
                 carrier.err().unwrap()
             );
+
             continue;
         }
 
@@ -272,11 +271,12 @@ pub fn resolve<
         if rtk_carrier.is_err() {
             error!(
                 "{}({}/{}) - unknown frequency: {}",
-                t,
+                epoch,
                 signal.sv.constellation,
                 signal.observable,
                 rtk_carrier.err().unwrap()
             );
+
             continue;
         }
 
@@ -355,9 +355,9 @@ pub fn resolve<
         }
 
         // update only on new epochs
-        if index > 0 && t > past_t {
+        if index > 0 && epoch > past_t {
             if collecting {
-                if t > next_period_start {
+                if epoch > next_period_start {
                     release = true;
                     // end of period: release attempt
                     for ((sv, sv_ref), tracker) in trackers.iter_mut() {
@@ -385,19 +385,31 @@ pub fn resolve<
                         }
                     }
                 } else {
-                    info!("{} - {} until CGGTTS release", t, next_period_start - t);
+                    info!(
+                        "{} - {} until CGGTTS release",
+                        epoch,
+                        next_period_start - epoch
+                    );
                 }
             } else {
                 // not collecting
-                if t >= next_collection_start {
-                    next_period_start = cv_calendar.next_period_start_after(t);
+                if epoch >= next_collection_start {
+                    next_period_start = cv_calendar.next_period_start_after(epoch);
                     collecting = true;
-                    debug!("{} - CGGTTS tracking started", t);
-                    info!("{} - {} until CGGTTS release", t, next_period_start - t);
+                    debug!("{} - CGGTTS tracking started", epoch);
+                    info!(
+                        "{} - {} until CGGTTS release",
+                        epoch,
+                        next_period_start - epoch
+                    );
                 }
 
                 if !collecting {
-                    debug!("{} - {} until next tracking", t, next_collection_start - t);
+                    debug!(
+                        "{} - {} until next tracking",
+                        epoch,
+                        next_collection_start - epoch
+                    );
                 }
             }
         }
@@ -405,20 +417,28 @@ pub fn resolve<
         if release {
             // reset
             release = false;
-            next_period_start = cv_calendar.next_period_start_after(t);
+            next_period_start = cv_calendar.next_period_start_after(epoch);
             next_collection_start = cv_calendar.next_data_collection_after(past_t);
-            collecting = t > next_collection_start;
+            collecting = epoch > next_collection_start;
 
             if collecting {
-                debug!("{} - CGGTTS tracking started", t);
+                debug!("{} - CGGTTS tracking started", epoch);
             } else {
-                debug!("{} - {} until next tracking", t, next_collection_start - t);
+                debug!(
+                    "{} - {} until next tracking",
+                    epoch,
+                    next_collection_start - epoch
+                );
             }
 
-            info!("{} - {} until CGGTTS release", t, next_period_start - t);
+            info!(
+                "{} - {} until CGGTTS release",
+                epoch,
+                next_period_start - epoch
+            );
         }
 
-        past_t = t;
+        past_t = epoch;
     }
 
     Ok(tracks)

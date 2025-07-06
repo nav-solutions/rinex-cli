@@ -1,11 +1,11 @@
 //! PPP solver
 use crate::{
     cli::Context,
-    positioning::{cast_rtk_carrier, ClockStateProvider, EphemerisSource},
+    positioning::{cast_rtk_carrier, EphemerisBuffer},
 };
 
 use std::{
-    cell::RefCell,
+    cell::{RefCell, RefMut},
     collections::{BTreeMap, HashMap},
 };
 
@@ -20,26 +20,23 @@ pub use report::Report;
 pub mod post_process;
 
 use gnss_rtk::prelude::{
-    AbsoluteTime, Candidate, ClockProfile, EnvironmentalBias,
-    EphemerisSource as RTKEphemerisSource, Epoch, Observation, OrbitSource, PVTSolution, Solver,
-    SpacebornBias, UserParameters, UserProfile,
+    AbsoluteTime, Candidate, ClockProfile, EnvironmentalBias, EphemerisSource, Epoch, Observation,
+    OrbitSource, PVTSolution, Solver, SpacebornBias, UserParameters, UserProfile,
 };
 
 pub fn resolve<
     'a,
     'b,
-    CK: ClockStateProvider,
-    EPH: RTKEphemerisSource,
+    EPH: EphemerisSource,
     ORB: OrbitSource,
-    SB: SpacebornBias,
     EB: EnvironmentalBias,
+    SB: SpacebornBias,
     TIM: AbsoluteTime,
 >(
     ctx: &Context,
-    eph: &'a RefCell<EphemerisSource<'b>>,
-    params: UserParameters,
-    mut clock: CK,
+    user_params: UserParameters,
     mut solver: Solver<EPH, ORB, EB, SB, TIM>,
+    ephemeris_buffer: RefMut<EphemerisBuffer<'a>>,
 ) -> BTreeMap<Epoch, PVTSolution> {
     let mut past_epoch = Option::<Epoch>::None;
 
@@ -51,20 +48,18 @@ pub fn resolve<
     let mut candidates = Vec::<Candidate>::with_capacity(4);
     let mut sv_observations = HashMap::<SV, Vec<Observation>>::new();
 
-    // TODO: RTK
-    let mut remote_observations = Vec::<Observation>::new();
-
-    for (t, signal) in obs_data.signal_observations_sampling_ok_iter() {
+    for (epoch, signal) in obs_data.signal_observations_sampling_ok_iter() {
         let carrier = Carrier::from_observable(signal.sv.constellation, &signal.observable);
 
         if carrier.is_err() {
             error!(
                 "{}({}/{}) - unknown signal {:?}",
-                t,
+                epoch,
                 signal.sv.constellation,
                 signal.observable,
                 carrier.err().unwrap()
             );
+
             continue;
         }
 
@@ -75,53 +70,54 @@ pub fn resolve<
         if rtk_carrier.is_err() {
             error!(
                 "{}({}/{}) - unknown frequency: {}",
-                t,
+                epoch,
                 signal.sv.constellation,
                 signal.observable,
                 rtk_carrier.err().unwrap()
             );
+
             continue;
         }
 
         let rtk_carrier = rtk_carrier.unwrap();
 
         if let Some(past_t) = past_epoch {
-            if t > past_t {
+            if epoch > past_t {
                 // New epoch: solving attempt
                 for (sv, observations) in sv_observations.iter() {
                     // Create new candidate
                     let mut cd = Candidate::new(*sv, past_t, observations.clone());
 
-                    // candidate "fixup" or customizations
-                    match clock.next_clock_at(past_t, *sv) {
-                        Some(dt) => cd.set_clock_correction(dt),
-                        None => error!("{} ({}) - no clock correction available", past_t, *sv),
-                    }
+                    // // candidate "fixup" or customizations
+                    // match clock.next_clock_at(past_t, *sv) {
+                    //     Some(dt) => cd.set_clock_correction(dt),
+                    //     None => error!("{} ({}) - no clock correction available", past_t, *sv),
+                    // }
 
-                    if let Some((_, _, eph)) = eph.borrow_mut().select(past_t, *sv) {
-                        if let Some(tgd) = eph.tgd() {
-                            debug!("{} ({}) - tgd: {}", past_t, *sv, tgd);
-                            cd.set_group_delay(tgd);
-                        }
-                    }
+                    // if let Some((_, _, eph)) = eph.borrow_mut().select(past_t, *sv) {
+                    //     if let Some(tgd) = eph.tgd() {
+                    //         debug!("{} ({}) - tgd: {}", past_t, *sv, tgd);
+                    //         cd.set_group_delay(tgd);
+                    //     }
+                    // }
 
                     candidates.push(cd);
                 }
 
-                match solver.ppp_solving(past_t, params, &candidates) {
+                match solver.ppp(past_t, user_params, &candidates) {
                     Ok(pvt) => {
                         info!(
-                            "{} : new pvt solution {:?} dt={}",
-                            pvt.epoch, pvt.pos_m, pvt.clock_offset_s
+                            "{} : new {:?} solution {:?} dt={}",
+                            pvt.epoch, pvt.solution_type, pvt.pos_m, pvt.clock_offset_s
                         );
+
                         solutions.insert(pvt.epoch, pvt);
                     },
-                    Err(e) => warn!("{} : pvt solver error \"{}\"", past_t, e),
+                    Err(e) => warn!("{} : solver error \"{}\"", past_t, e),
                 }
 
                 candidates.clear();
                 sv_observations.clear();
-                remote_observations.clear();
             }
         }
 
@@ -196,8 +192,7 @@ pub fn resolve<
                 _ => {},
             }
         }
-
-        past_epoch = Some(t);
+        past_epoch = Some(epoch);
     }
     solutions
 }

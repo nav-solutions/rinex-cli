@@ -57,8 +57,8 @@ pub struct Context {
     pub workspace: Workspace,
 
     #[cfg(feature = "ppp")]
-    /// (RX) [Orbit] to use, whether is was automatically picked up,
-    /// or manually overwritten.
+    /// (RX) [Orbit] to be used in several proceeses.
+    /// Either automatically picked up, manually assigned or overwritten, or non-existing.
     pub rx_orbit: Option<Orbit>,
 }
 

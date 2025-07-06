@@ -23,7 +23,7 @@ msrv = "1.82"
 
 [features]
 # PPP and PPP+CGGTTS are not supported by default, because they are quite heavy.
-default = ["csv"]
+default = ["csv", "ppp", "cggtts"]
 
 # Activate PVT solutions solver (ppp command-line option)
 ppp = [
@@ -65,7 +65,7 @@ features = [
 
 [dependencies.gnss-rtk]
 git = "https://github.com/rtk-rs/gnss-rtk"
-rev = "88dbb9cee6a5cd2cc3badbe86292ac6fc3b32fbc"
+rev = "d244eeac9c88f8cf86ee939cae6fb057e956a13d"
 optional = true
 features = [
     "serde",

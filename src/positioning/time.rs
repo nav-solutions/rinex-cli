@@ -1,8 +1,8 @@
-use crate::cli::Context;
 use gnss_qc::prelude::TimeCorrectionsDB;
-use hifitime::Unit;
-
 use gnss_rtk::prelude::{AbsoluteTime, Epoch, TimeScale};
+use log::info;
+
+use crate::cli::Context;
 
 pub struct Time {
     database: Option<TimeCorrectionsDB>,
@@ -34,6 +34,7 @@ impl AbsoluteTime for Time {
 
 impl Time {
     pub fn new(ctx: &Context) -> Self {
+        info!("time corrections database created");
         Self {
             database: ctx.data.time_corrections_database(),
         }

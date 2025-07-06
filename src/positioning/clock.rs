@@ -7,10 +7,6 @@ use std::{cell::RefCell, collections::HashMap};
 
 use gnss_rtk::prelude::{Duration, Epoch, SatelliteClockCorrection, SV};
 
-pub trait ClockStateProvider {
-    fn next_clock_at(&mut self, t: Epoch, sv: SV) -> Option<ClockCorrection>;
-}
-
 impl CenteredDataPoints<f64> for f64 {
     fn zero() -> f64 {
         0.0

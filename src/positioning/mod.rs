@@ -4,80 +4,50 @@ use std::cell::RefCell;
 use std::fs::read_to_string;
 
 mod buffer;
-pub use buffer::Buffer;
-
+mod coords;
+mod orbit;
+mod precise;
 mod snapshot;
+mod time;
+// mod clock;
+mod biases;
+mod ephemeris;
+mod ppp; // precise point positioning
+mod rtk; // RTK positioning
+
+#[cfg(feature = "cggtts")]
+mod cggtts; // CGGTTS special solver
+
+pub use buffer::Buffer;
+pub use coords::Coords3d;
 pub use snapshot::{CenteredDataPoints, CenteredSnapshot};
 
-mod eph;
-use eph::EphemerisSource;
-
-mod precise;
+use orbit::Orbits;
 use precise::PreciseOrbits;
-
-mod time;
 use time::Time;
 
-mod ppp; // precise point positioning
+use biases::{environment::EnvironmentalBiases, space::SpacebornBiases};
+
+use ephemeris::{EphemerisBuffer, NullEphemerisSource};
+
 use ppp::{
     post_process::{post_process as ppp_post_process, Error as PPPPostError},
     Report as PPPReport,
 };
 
 #[cfg(feature = "cggtts")]
-mod cggtts; // CGGTTS special solver
-
-#[cfg(feature = "cggtts")]
 use cggtts::{post_process as cggtts_post_process, Report as CggttsReport};
 
-// mod rtk;
-// pub use rtk::RemoteRTKReference;
-
-mod orbit;
-use orbit::Orbits;
-
-mod coords;
-pub use coords::Coords3d;
-
-mod clock;
-use clock::Clock;
-pub use clock::ClockStateProvider;
-
-use rinex::{
-    carrier::Carrier,
-    prelude::{Constellation, Rinex},
-};
+use rinex::carrier::Carrier;
 
 use gnss_qc::prelude::QcExtraPage;
 
 use gnss_rtk::prelude::{
-    BiasRuntime, Carrier as RTKCarrier, ClockProfile, Config, Duration, EnvironmentalBias,
-    Ephemeris as RTKEphemerisData, EphemerisSource as RTKEphemeris, Epoch, Error as RTKError,
-    KbModel, Method, SatelliteClockCorrection, Solver, SpacebornBias, TroposphereModel,
-    UserParameters, UserProfile, SV,
+    Carrier as RTKCarrier, ClockProfile, Config, Duration, Error as RTKError, Method, Solver,
+    UserParameters, UserProfile,
 };
 
 use thiserror::Error;
-
-struct EnvironmentalBiases {}
-
-impl EnvironmentalBias for EnvironmentalBiases {
-    fn ionosphere_bias_m(&self, _: &BiasRuntime) -> f64 {
-        0.0
-    }
-
-    fn troposphere_bias_m(&self, rtm: &BiasRuntime) -> f64 {
-        TroposphereModel::Niel.bias_m(rtm)
-    }
-}
-
-struct NullEphemeris {}
-
-impl RTKEphemeris for NullEphemeris {
-    fn ephemeris_data(&self, epoch: Epoch, sv: SV) -> Option<RTKEphemerisData> {
-        None
-    }
-}
 
 #[derive(Debug, Error)]
 pub enum Error {
@@ -98,16 +68,9 @@ pub fn rtk_carrier_cast(carrier: RTKCarrier) -> Carrier {
         RTKCarrier::B3 => Carrier::B3,
         RTKCarrier::E5a5b => Carrier::E5a5b,
         RTKCarrier::L1 => Carrier::L1,
-        // RTKCarrier::G1 => Carrier::G1(None),
-        // RTKCarrier::G2 => Carrier::G2(None),
-        // RTKCarrier::G3 => Carrier::G3,
         RTKCarrier::E5b => Carrier::E5b,
-        // RTKCarrier::E6Lex => Carrier::E6,
-        // RTKCarrier::G1a => Carrier::G1a,
-        // RTKCarrier::G2a => Carrier::G2a,
         RTKCarrier::L5 => Carrier::L5,
         RTKCarrier::L2 => Carrier::L2,
-        // RTKCarrier::S => Carrier::S,
     }
 }
 
@@ -125,131 +88,10 @@ pub fn cast_rtk_carrier(carrier: Carrier) -> Result<RTKCarrier, RTKError> {
 //     )
 // }
 
-//use map_3d::{ecef2geodetic, rad2deg, Ellipsoid};
-
-//pub fn tropo_components(meteo: Option<&Rinex>, t: Epoch, lat_ddeg: f64) -> Option<(f64, f64)> {
-//    const MAX_LATDDEG_DELTA: f64 = 15.0;
-//    let max_dt = Duration::from_hours(24.0);
-//    let rnx = meteo?;
-//    let meteo = rnx.header.meteo.as_ref().unwrap();
-//
-//    let delays: Vec<(Observable, f64)> = meteo
-//        .sensors
-//        .iter()
-//        .filter_map(|s| match s.observable {
-//            Observable::ZenithDryDelay => {
-//                let (x, y, z, _) = s.position?;
-//                let (lat, _, _) = ecef2geodetic(x, y, z, Ellipsoid::WGS84);
-//                let lat = rad2deg(lat);
-//                if (lat - lat_ddeg).abs() < MAX_LATDDEG_DELTA {
-//                    let value = rnx
-//                        .zenith_dry_delay()
-//                        .filter(|(t_sens, _)| (*t_sens - t).abs() < max_dt)
-//                        .min_by_key(|(t_sens, _)| (*t_sens - t).abs());
-//                    let (_, value) = value?;
-//                    debug!("{:?} lat={} zdd {}", t, lat_ddeg, value);
-//                    Some((s.observable.clone(), value))
-//                } else {
-//                    None
-//                }
-//            },
-//            Observable::ZenithWetDelay => {
-//                let (x, y, z, _) = s.position?;
-//                let (mut lat, _, _) = ecef2geodetic(x, y, z, Ellipsoid::WGS84);
-//                lat = rad2deg(lat);
-//                if (lat - lat_ddeg).abs() < MAX_LATDDEG_DELTA {
-//                    let value = rnx
-//                        .zenith_wet_delay()
-//                        .filter(|(t_sens, _)| (*t_sens - t).abs() < max_dt)
-//                        .min_by_key(|(t_sens, _)| (*t_sens - t).abs());
-//                    let (_, value) = value?;
-//                    debug!("{:?} lat={} zdd {}", t, lat_ddeg, value);
-//                    Some((s.observable.clone(), value))
-//                } else {
-//                    None
-//                }
-//            },
-//            _ => None,
-//        })
-//        .collect();
-//
-//    if delays.len() < 2 {
-//        None
-//    } else {
-//        let zdd = delays
-//            .iter()
-//            .filter_map(|(obs, value)| {
-//                if obs == &Observable::ZenithDryDelay {
-//                    Some(*value)
-//                } else {
-//                    None
-//                }
-//            })
-//            .reduce(|k, _| k)
-//            .unwrap();
-//
-//        let zwd = delays
-//            .iter()
-//            .filter_map(|(obs, value)| {
-//                if obs == &Observable::ZenithWetDelay {
-//                    Some(*value)
-//                } else {
-//                    None
-//                }
-//            })
-//            .reduce(|k, _| k)
-//            .unwrap();
-//
-//        Some((zwd, zdd))
-//    }
-//}
-
-/// Returns a [KbModel]
-pub fn kb_model(nav: &Rinex, t: Epoch) -> Option<KbModel> {
-    let (nav_key, model) = nav
-        .nav_klobuchar_models_iter()
-        .min_by_key(|(k_i, _)| (k_i.epoch - t).abs())?;
-
-    Some(KbModel {
-        h_km: {
-            match nav_key.sv.constellation {
-                Constellation::BeiDou => 375.0,
-                // we only expect GPS or BDS here,
-                // badly formed RINEX will generate errors in the solutions
-                _ => 350.0,
-            }
-        },
-        alpha: model.alpha,
-        beta: model.beta,
-    })
-}
-
-// /*
-//  * Grabs nearest BD model (in time)
-//  */
-// pub fn bd_model(nav: &Rinex, t: Epoch) -> Option<BdModel> {
-//     let (_, model) = nav
-//         .nav_bdgim_models_iter()
-//         .min_by_key(|(k_i, _)| (k_i.epoch - t).abs())?;
-
-//     Some(BdModel { alpha: model.alpha })
-// }
-
-// /*
-//  * Grabs nearest NG model (in time)
-//  */
-// pub fn ng_model(nav: &Rinex, t: Epoch) -> Option<NgModel> {
-//     let (_, model) = nav
-//         .nav_nequickg_models_iter()
-//         .min_by_key(|(k_i, _)| (k_i.epoch - t).abs())?;
-
-//     Some(NgModel { a: model.a })
-// }
-
 pub fn precise_positioning(
     _cli: &Cli,
     ctx: &Context,
-    is_rtk: bool,
+    uses_rtk: bool,
     matches: &ArgMatches,
 ) -> Result<QcExtraPage, Error> {
     // Load custom configuration script, or Default
@@ -296,12 +138,10 @@ pub fn precise_positioning(
         "Positioning requires Observation RINEX"
     );
 
-    if !is_rtk {
-        assert!(
-            ctx.data.brdc_navigation().is_some(),
-            "Positioning requires Navigation RINEX"
-        );
-    }
+    assert!(
+        ctx.data.brdc_navigation().is_some(),
+        "Positioning requires Navigation RINEX"
+    );
 
     if let Some(obs_rinex) = ctx.data.observation() {
         if let Some(obs_header) = &obs_rinex.header.obs {
@@ -333,17 +173,24 @@ pub fn precise_positioning(
         }
     }
 
+    // Deploy base station if needed
+    if uses_rtk {
+        panic!("rtk: oops");
+    }
+
     // print config to be used
     info!("Using {:?} method", cfg.method);
 
-    // create data providers
-    let eph = RefCell::new(EphemerisSource::from_ctx(ctx));
-
-    let clocks = Clock::new(&ctx, &eph);
     let time = Time::new(&ctx);
-    let orbits = Orbits::new(&ctx, &eph);
 
-    // let mut rtk_reference = RemoteRTKReference::from_ctx(&ctx);
+    let mut ephemeris_buffer = RefCell::new(EphemerisBuffer::new(&ctx));
+
+    let env_biases = EnvironmentalBiases::new();
+    let orbits = Orbits::new(&ctx, &ephemeris_buffer);
+    let space_biases = SpacebornBiases::new(&ephemeris_buffer);
+
+    // Ephemeris interface is not used by this application
+    let null_eph = NullEphemerisSource::new();
 
     // reference point is mandatory to CGGTTS opmode
     #[cfg(feature = "cggtts")]
@@ -355,9 +202,6 @@ If your dataset does not describe one, you can manually describe one, see --help
             );
         }
     }
-
-    let null_eph = NullEphemeris {};
-    let env_biases = EnvironmentalBiases {};
 
     let apriori = ctx.rx_orbit;
 
@@ -375,7 +219,7 @@ If your dataset does not describe one, you can manually describe one, see --help
         cfg.clone(),
         null_eph.into(),
         orbits.into(),
-        spaceborn_biases.into(),
+        space_biases.into(),
         env_biases.into(),
         time,
         apriori_ecef_m,
@@ -383,18 +227,45 @@ If your dataset does not describe one, you can manually describe one, see --help
 
     let user_profile = if matches.get_flag("static") {
         UserProfile::Static
+    } else if matches.get_flag("car") {
+        UserProfile::Car
+    } else if matches.get_flag("airplane") {
+        UserProfile::Airplane
+    } else if matches.get_flag("rocket") {
+        UserProfile::Rocket
     } else {
         UserProfile::Pedestrian
     };
 
-    let clock_profile = ClockProfile::Oscillator;
+    let clock_profile = if matches.get_flag("quartz") {
+        ClockProfile::Quartz
+    } else if matches.get_flag("atomic") {
+        ClockProfile::Atomic
+    } else if matches.get_flag("h-maser") {
+        ClockProfile::H_MASER
+    } else {
+        ClockProfile::Oscillator
+    };
 
-    let params = UserParameters::new(user_profile.clone(), clock_profile.clone());
+    info!(
+        "deployed with {} user profile, clock profile: {:?}",
+        user_profile, clock_profile
+    );
 
+    let user_params = UserParameters::new(user_profile.clone(), clock_profile.clone());
+
+    // PPP+CGGTTS special case
     #[cfg(feature = "cggtts")]
     if matches.get_flag("cggtts") {
         //* CGGTTS special opmode */
-        let tracks = cggtts::resolve(ctx, &eph, params, clocks, solver, cfg.method)?;
+        let tracks = cggtts::resolve(
+            ctx,
+            cfg.method,
+            user_params,
+            solver,
+            ephemeris_buffer.borrow_mut(),
+        )?;
+
         if !tracks.is_empty() {
             cggtts_post_process(&ctx, &tracks, matches)?;
             let report = CggttsReport::new(&ctx, &tracks);
@@ -406,8 +277,9 @@ If your dataset does not describe one, you can manually describe one, see --help
         }
     }
 
-    /* PPP */
-    let solutions = ppp::resolve(ctx, &eph, params, clocks, solver);
+    // PPP/RTK
+    let solutions = ppp::resolve(ctx, user_params, solver, ephemeris_buffer.borrow_mut());
+
     if !solutions.is_empty() {
         ppp_post_process(&ctx, &solutions, matches)?;
         let report = PPPReport::new(&cfg, &ctx, user_profile, clock_profile, &solutions);
