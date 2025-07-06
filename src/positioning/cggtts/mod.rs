@@ -96,7 +96,7 @@ pub fn resolve<
     method: Method,
     params: UserParameters,
     mut solver: Solver<EPH, ORB, EB, SB, TIM>,
-    ephemeris_buffer: &mut RefMut<EphemerisBuffer<'a>>,
+    ephemeris_buffer: &mut EphemerisBuffer<'a>,
 ) -> Result<Vec<Track>, PositioningError> {
     let obs_data = ctx
         .data
@@ -145,20 +145,6 @@ pub fn resolve<
                 for (sv, observations) in sv_observations.iter() {
                     // create new candidate
                     let mut cd = Candidate::new(*sv, past_t, observations.clone());
-
-                    // fixup and customizations
-                    // match clock.next_clock_at(past_t, *sv) {
-                    //     Some(dt) => cd.set_clock_correction(dt),
-                    //     None => error!("{} ({}) - no clock correction available", past_t, *sv),
-                    // }
-
-                    // if let Some((_, _, eph)) = eph.borrow_mut().select(past_t, *sv) {
-                    //     if let Some(tgd) = eph.tgd() {
-                    //         debug!("{} ({}) - tgd: {}", past_t, *sv, tgd);
-                    //         cd.set_group_delay(tgd);
-                    //     }
-                    // }
-
                     candidates.push(cd);
                 }
 

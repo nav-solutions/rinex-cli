@@ -7,9 +7,31 @@ use rinex::prelude::{
     Carrier, Epoch, Observable, Rinex, RinexType,
 };
 
+use clap::ArgMatches;
+
 use gnss_rtk::prelude::{Candidate, RTKBase};
 
 use std::collections::{BTreeMap, HashMap};
+
+pub fn parse_rinex(matches: &ArgMatches) -> Rinex {
+    let mut first_file = Option::<String>::None;
+
+    let file_path = matches
+        .get_one::<String>("fp")
+        .expect("Base station observations required!");
+
+    let rinex = if file_path.ends_with(".gz") {
+        Rinex::from_gzip_file(file_path)
+    } else {
+        Rinex::from_file(file_path)
+    };
+
+    let mut rinex = rinex.unwrap_or_else(|e| {
+        panic!("Failed to parse base station observations: {}", e);
+    });
+
+    rinex
+}
 
 pub struct RTKBaseStation<'a> {
     /// Name of this station

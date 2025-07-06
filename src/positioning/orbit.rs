@@ -18,11 +18,11 @@ pub struct Orbits<'a, 'b> {
     // has_precise: bool,
     // eph: &'a RefCell<EphemerisSource<'b>>,
     // precise: RefCell<PreciseOrbits<'a>>,
-    ephemeris_buffer: &'a RefCell<EphemerisBuffer<'b>>,
+    ephemeris_buffer: &'a RefCell<&'a EphemerisBuffer<'b>>,
 }
 
 impl<'a, 'b> Orbits<'a, 'b> {
-    pub fn new(ctx: &'a Context, ephemeris_buffer: &'a RefCell<EphemerisBuffer<'b>>) -> Self {
+    pub fn new(ctx: &'a Context, ephemeris_buffer: &'a RefCell<&'a EphemerisBuffer<'b>>) -> Self {
         // let has_precise = ctx.data.has_sp3();
         // let precise = RefCell::new(PreciseOrbits::new(ctx));
         Self { ephemeris_buffer }

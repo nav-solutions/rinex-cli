@@ -35,6 +35,8 @@ use rtk::RTKBaseStation;
 #[cfg(feature = "cggtts")]
 use cggtts::{post_process as cggtts_post_process, Report as CggttsReport};
 
+use log::error;
+
 use rinex::{carrier::Carrier, prelude::Rinex};
 
 use gnss_qc::prelude::QcExtraPage;
@@ -82,24 +84,18 @@ pub fn cast_rtk_carrier(carrier: Carrier) -> Result<RTKCarrier, RTKError> {
         Carrier::B1 => Ok(RTKCarrier::B1),
         Carrier::B3 => Ok(RTKCarrier::B3),
         Carrier::E5a5b => Ok(RTKCarrier::E5a5b),
-        Carrier::L1 => Ok(RTKCarrier::L1),
-        Carrier::E5b => Ok(RTKCarrier::E5b),
         Carrier::L2 => Ok(RTKCarrier::L2),
-        Carrier::L5 => Ok(RTKCarrier::L5),
-        _ => Err(RTKError::UnknownCarrierFrequency),
+        Carrier::L5 | Carrier::E5a => Ok(RTKCarrier::L5),
+        Carrier::L1 | Carrier::E1 => Ok(RTKCarrier::L1),
+        Carrier::E5b => Ok(RTKCarrier::E5b),
+        carrier => {
+            error!("{} - signal not supported", carrier);
+            Err(RTKError::UnknownCarrierFrequency)
+        },
     }
 }
 
-// // helper in reference signal determination
-// fn rtk_reference_carrier(carrier: RTKCarrier) -> bool {
-//     matches!(
-//         carrier,
-//         RTKCarrier::L1 | RTKCarrier::E1 | RTKCarrier::B1c | RTKCarrier::B1i
-//     )
-// }
-
 pub fn precise_positioning(
-    _cli: &Cli,
     ctx: &Context,
     uses_rtk: bool,
     matches: &ArgMatches,
@@ -183,11 +179,15 @@ pub fn precise_positioning(
         }
     }
 
-    let obs = Rinex::basic_obs();
+    let rtk_obs = if uses_rtk {
+        rtk::parse_rinex(&matches)
+    } else {
+        Rinex::basic_obs()
+    };
 
     // Deploy base station if needed
     let base_station = if uses_rtk {
-        Some(RTKBaseStation::new(&obs))
+        Some(RTKBaseStation::new(&rtk_obs))
     } else {
         None
     };
@@ -197,11 +197,13 @@ pub fn precise_positioning(
 
     let time = Time::new(&ctx);
 
-    let mut ephemeris_buffer = RefCell::new(EphemerisBuffer::new(&ctx));
+    let mut ephemeris_buffer = EphemerisBuffer::new(&ctx);
+
+    let ref_cell = RefCell::new(&ephemeris_buffer);
 
     let env_biases = EnvironmentalBiases::new();
-    let orbits = Orbits::new(&ctx, &ephemeris_buffer);
-    let space_biases = SpacebornBiases::new(&ephemeris_buffer);
+    let orbits = Orbits::new(&ctx, &ref_cell);
+    let space_biases = SpacebornBiases::new(&ref_cell);
 
     // Ephemeris interface is not used by this application
     let null_eph = NullEphemerisSource::new();
@@ -262,19 +264,17 @@ If your dataset does not describe one, you can manually describe one, see --help
     };
 
     info!(
-        "deployed with {} user profile, clock profile: {:?}",
+        "deployed with {} profile - clock profile: {:?}",
         user_profile, clock_profile
     );
 
     let user_params = UserParameters::new(user_profile.clone(), clock_profile.clone());
 
-    let mut mutable_buffer = ephemeris_buffer.borrow_mut();
-
     // PPP+CGGTTS special case
     #[cfg(feature = "cggtts")]
     if matches.get_flag("cggtts") {
         //* CGGTTS special opmode */
-        let tracks = cggtts::resolve(ctx, cfg.method, user_params, solver, &mut mutable_buffer)?;
+        let tracks = cggtts::resolve(ctx, cfg.method, user_params, solver, &mut ephemeris_buffer)?;
 
         if !tracks.is_empty() {
             cggtts_post_process(&ctx, &tracks, matches)?;
@@ -288,7 +288,7 @@ If your dataset does not describe one, you can manually describe one, see --help
     }
 
     // PPP/RTK
-    let solutions = ppp::resolve(ctx, user_params, solver, &mut mutable_buffer);
+    let solutions = ppp::resolve(ctx, user_params, solver, &mut ephemeris_buffer);
 
     if !solutions.is_empty() {
         ppp_post_process(&ctx, &solutions, matches)?;

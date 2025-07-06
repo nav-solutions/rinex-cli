@@ -7,7 +7,7 @@ use gnss_rtk::prelude::{BiasRuntime, Duration, Epoch, SatelliteClockCorrection, 
 use crate::positioning::EphemerisBuffer;
 
 pub struct SpacebornBiases<'a, 'b> {
-    buffer: &'a RefCell<EphemerisBuffer<'b>>,
+    buffer: &'a RefCell<&'a EphemerisBuffer<'b>>,
 }
 
 impl<'a, 'b> SpacebornBias for SpacebornBiases<'a, 'b> {
@@ -45,7 +45,7 @@ impl<'a, 'b> SpacebornBias for SpacebornBiases<'a, 'b> {
 }
 
 impl<'a, 'b> SpacebornBiases<'a, 'b> {
-    pub fn new(buffer: &'a RefCell<EphemerisBuffer<'b>>) -> Self {
+    pub fn new(buffer: &'a RefCell<&'a EphemerisBuffer<'b>>) -> Self {
         info!("spaceborn biases created & deployed");
         Self { buffer }
     }

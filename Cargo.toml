@@ -23,7 +23,7 @@ msrv = "1.82"
 
 [features]
 # PPP and PPP+CGGTTS are not supported by default, because they are quite heavy.
-default = ["csv", "ppp", "cggtts"]
+default = ["csv"]
 
 # Activate PVT solutions solver (ppp command-line option)
 ppp = [

@@ -303,34 +303,41 @@ pub fn main() -> Result<(), Error> {
             fops::filegen(&ctx, &cli.matches, submatches)?;
             return Ok(());
         },
+
         Some(("merge", submatches)) => {
             fops::merge(&ctx, &cli, submatches)?;
             return Ok(());
         },
+
         Some(("split", submatches)) => {
             fops::split(&ctx, submatches)?;
             return Ok(());
         },
+
         Some(("tbin", submatches)) => {
             fops::time_binning(&ctx, &cli.matches, submatches)?;
             return Ok(());
         },
+
         Some(("cbin", submatches)) => {
             fops::constell_timescale_binning(&ctx, submatches)?;
             return Ok(());
         },
+
         Some(("diff", submatches)) => {
             fops::diff(&ctx, &cli, submatches)?;
             return Ok(());
         },
+
         #[cfg(feature = "ppp")]
         Some(("ppp", submatches)) => {
-            let chapter = positioning::precise_positioning(&cli, &ctx, false, submatches)?;
+            let chapter = positioning::precise_positioning(&ctx, false, submatches)?;
             extra_pages.push(chapter);
         },
+
         #[cfg(feature = "ppp")]
         Some(("rtk", submatches)) => {
-            let chapter = positioning::precise_positioning(&cli, &ctx, true, submatches)?;
+            let chapter = positioning::precise_positioning(&ctx, true, submatches)?;
             extra_pages.push(chapter);
         },
         _ => {},
