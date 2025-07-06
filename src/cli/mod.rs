@@ -57,8 +57,8 @@ pub struct Context {
     pub workspace: Workspace,
 
     #[cfg(feature = "ppp")]
-    /// (RX) [Orbit] to use, whether is was automatically picked up,
-    /// or manually overwritten.
+    /// (RX) [Orbit] to be used in several proceeses.
+    /// Either automatically picked up, manually assigned or overwritten, or non-existing.
     pub rx_orbit: Option<Orbit>,
 }
 
@@ -327,33 +327,6 @@ Otherwise it gets automatically picked up."))
             fp.collect()
         } else {
             Vec::new()
-        }
-    }
-
-    /// Returns individual input BASE STATION -d
-    pub fn base_station_directories(&self) -> Vec<&String> {
-        match self.matches.subcommand() {
-            Some(("rtk", submatches)) => {
-                if let Some(dir) = submatches.get_many::<String>("dir") {
-                    dir.collect()
-                } else {
-                    Vec::new()
-                }
-            },
-            _ => Vec::new(),
-        }
-    }
-    /// Returns individual input BASE STATION -fp
-    pub fn base_station_files(&self) -> Vec<&String> {
-        match self.matches.subcommand() {
-            Some(("rtk", submatches)) => {
-                if let Some(fp) = submatches.get_many::<String>("fp") {
-                    fp.collect()
-                } else {
-                    Vec::new()
-                }
-            },
-            _ => Vec::new(),
         }
     }
 

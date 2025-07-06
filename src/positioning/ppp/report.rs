@@ -2,8 +2,8 @@ use crate::cli::Context;
 use std::collections::BTreeMap;
 
 use gnss_rtk::prelude::{
-    Config as NaviConfig, Duration, Epoch, Method as NaviMethod, PVTSolution,
-    Profile as NaviProfile, TimeScale, User as UserProfile, SV,
+    ClockProfile, Config as NaviConfig, Duration, Epoch, Method as NaviMethod, PVTSolution,
+    TimeScale, UserParameters, UserProfile, SV,
 };
 
 use gnss_qc::{
@@ -30,13 +30,14 @@ impl Render for ReportTab {
 
 struct Summary {
     method: NaviMethod,
-    profile: NaviProfile,
     orbit: String,
     first_epoch: Epoch,
     last_epoch: Epoch,
     duration: Duration,
     satellites: Vec<SV>,
     timescale: TimeScale,
+    user_profile: UserProfile,
+    clock_profile: ClockProfile,
     final_err_m: Option<(f64, f64, f64)>,
     final_geo_ddeg_m: (f64, f64, f64),
     averaged_err_m: Option<(f64, f64, f64)>,
@@ -52,10 +53,27 @@ impl Render for Summary {
                     tbody {
                         tr {
                             th class="is-info" {
-                                "Profile"
+                                "Session"
                             }
-                            td {
-                                (self.profile.to_string())
+                            @ if self.user_profile == UserProfile::Static {
+                                td {
+                                    ("Static")
+                                }
+                            } @ else {
+                                td {
+                                    ("Kinematic")
+                                }
+                            }
+                        }
+                        tr {
+                            th class="is-info" {
+                                "User Profile"
+                            }
+                        }
+
+                        tr {
+                            th class="is-info" {
+                                "Clock Profile"
                             }
                         }
 
@@ -296,7 +314,8 @@ impl Summary {
     fn new(
         cfg: &NaviConfig,
         ctx: &Context,
-        user: &UserProfile,
+        user_profile: UserProfile,
+        clock_profile: ClockProfile,
         solutions: &BTreeMap<Epoch, PVTSolution>,
         x0_y0_z0_m: Option<(f64, f64, f64)>,
         lat0_long0_alt0_ddeg_ddeg_km: Option<(f64, f64, f64)>,
@@ -350,7 +369,7 @@ impl Summary {
                 }
             }
 
-            if user.profile == NaviProfile::Static {
+            if user_profile == UserProfile::Static {
                 // averaged coords
                 if let Some(averaged_latlongalt_ddeg_m) = &mut averaged_latlongalt_ddeg_m {
                     *averaged_latlongalt_ddeg_m = (
@@ -388,6 +407,8 @@ impl Summary {
             last_epoch,
             timescale,
             satellites,
+            user_profile,
+            clock_profile,
             final_err_m,
             final_geo_ddeg_m,
             averaged_err_m,
@@ -400,8 +421,6 @@ impl Summary {
                 }
             },
             method: cfg.method,
-            profile: user.profile,
-            // filter: cfg.solver.filter,
             duration: last_epoch - first_epoch,
             surveyed_lat_long_alt_ddeg_ddeg_km: lat0_long0_alt0_ddeg_ddeg_km,
         }
@@ -411,32 +430,45 @@ impl Summary {
 struct ReportContent {
     /// summary
     summary: Summary,
+
     /// sv_plot
     sv_plot: Plot,
+
     /// map_proj
     map_proj: Plot,
+
     /// clk_plot
     clk_plot: Plot,
+
     /// drift_plot
     drift_plot: Plot,
+
     /// ddeg_plot
     ddeg_plot: Plot,
+
     /// altitude_plot
     altitude_plot: Plot,
+
     /// coords_err
     coords_err_plot: Option<Plot>,
+
     /// 3d_plot
     coords_err3d_plot: Option<Plot>,
+
     /// velocity_plot
     vel_plot: Plot,
+
     /// DOP
     dop_plot: Plot,
+
     /// TDOP
     tdop_plot: Plot,
+
     // /// NAVI
     // navi_plot: Plot,
     /// tropod
     tropod_plot: Plot,
+
     /// ionod
     ionod_plot: Plot,
 }
@@ -446,6 +478,7 @@ impl ReportContent {
         cfg: &NaviConfig,
         ctx: &Context,
         user_profile: UserProfile,
+        clock_profile: ClockProfile,
         solutions: &BTreeMap<Epoch, PVTSolution>,
     ) -> Self {
         let nb_solutions = solutions.len();
@@ -470,7 +503,8 @@ impl ReportContent {
         let summary = Summary::new(
             cfg,
             ctx,
-            &user_profile,
+            user_profile.clone(),
+            clock_profile,
             solutions,
             x0y0z0_m,
             lat0_long0_alt0_km,
@@ -517,7 +551,7 @@ impl ReportContent {
                 for (index, (_, sol_i)) in solutions.iter().enumerate() {
                     let (lat_ddeg, long_ddeg, _) = sol_i.lat_long_alt_deg_deg_m;
 
-                    let modulo = if user_profile.profile == NaviProfile::Static {
+                    let modulo = if user_profile == UserProfile::Static {
                         10
                     } else {
                         1
@@ -645,53 +679,53 @@ impl ReportContent {
                 let mut plot =
                     Plot::timedomain_plot("vel_plot", "Velocity", "Velocity [m/s]", true);
 
-                let vel_x = solutions
-                    .iter()
-                    .map(|(_, sol)| sol.vel_m_s.0)
-                    .collect::<Vec<_>>();
+                // let vel_x = solutions
+                //     .iter()
+                //     .map(|(_, sol)| sol.vel_m_s.0)
+                //     .collect::<Vec<_>>();
 
-                let vel_y = solutions
-                    .iter()
-                    .map(|(_, sol)| sol.vel_m_s.1)
-                    .collect::<Vec<_>>();
+                // let vel_y = solutions
+                //     .iter()
+                //     .map(|(_, sol)| sol.vel_m_s.1)
+                //     .collect::<Vec<_>>();
 
-                let vel_z = solutions
-                    .iter()
-                    .map(|(_, sol)| sol.vel_m_s.2)
-                    .collect::<Vec<_>>();
+                // let vel_z = solutions
+                //     .iter()
+                //     .map(|(_, sol)| sol.vel_m_s.2)
+                //     .collect::<Vec<_>>();
 
-                let trace = Plot::timedomain_chart(
-                    "vel_x",
-                    Mode::Markers,
-                    MarkerSymbol::Cross,
-                    &epochs,
-                    vel_x,
-                    true,
-                );
+                // let trace = Plot::timedomain_chart(
+                //     "vel_x",
+                //     Mode::Markers,
+                //     MarkerSymbol::Cross,
+                //     &epochs,
+                //     vel_x,
+                //     true,
+                // );
 
-                plot.add_trace(trace);
+                // plot.add_trace(trace);
 
-                let trace = Plot::timedomain_chart(
-                    "vel_y",
-                    Mode::Markers,
-                    MarkerSymbol::Cross,
-                    &epochs,
-                    vel_y,
-                    true,
-                );
+                // let trace = Plot::timedomain_chart(
+                //     "vel_y",
+                //     Mode::Markers,
+                //     MarkerSymbol::Cross,
+                //     &epochs,
+                //     vel_y,
+                //     true,
+                // );
 
-                plot.add_trace(trace);
+                // plot.add_trace(trace);
 
-                let trace = Plot::timedomain_chart(
-                    "vel_z",
-                    Mode::Markers,
-                    MarkerSymbol::Cross,
-                    &epochs,
-                    vel_z,
-                    true,
-                );
+                // let trace = Plot::timedomain_chart(
+                //     "vel_z",
+                //     Mode::Markers,
+                //     MarkerSymbol::Cross,
+                //     &epochs,
+                //     vel_z,
+                //     true,
+                // );
 
-                plot.add_trace(trace);
+                // plot.add_trace(trace);
                 plot
             },
             tropod_plot: {
@@ -884,20 +918,20 @@ impl ReportContent {
                 let mut plot =
                     Plot::timedomain_plot("clk_drift", "Clock Drift", "Drift [s/s]", true);
 
-                let clock_drift = solutions
-                    .iter()
-                    .map(|(_, sol)| sol.clock_drift_s_s)
-                    .collect::<Vec<_>>();
+                // let clock_drift = solutions
+                //     .iter()
+                //     .map(|(_, sol)| sol.clock_drift_s_s)
+                //     .collect::<Vec<_>>();
 
-                let trace = Plot::timedomain_chart(
-                    "drift",
-                    Mode::Markers,
-                    MarkerSymbol::Cross,
-                    &epochs,
-                    clock_drift,
-                    true,
-                );
-                plot.add_trace(trace);
+                // let trace = Plot::timedomain_chart(
+                //     "drift",
+                //     Mode::Markers,
+                //     MarkerSymbol::Cross,
+                //     &epochs,
+                //     clock_drift,
+                //     true,
+                // );
+                // plot.add_trace(trace);
                 plot
             },
 
@@ -1172,11 +1206,12 @@ impl Report {
         cfg: &NaviConfig,
         ctx: &Context,
         user_profile: UserProfile,
+        clock_profile: ClockProfile,
         solutions: &BTreeMap<Epoch, PVTSolution>,
     ) -> Self {
         Self {
             tab: ReportTab {},
-            content: ReportContent::new(cfg, ctx, user_profile, solutions),
+            content: ReportContent::new(cfg, ctx, user_profile, clock_profile, solutions),
         }
     }
 }
