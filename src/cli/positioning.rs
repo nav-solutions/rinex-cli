@@ -35,13 +35,13 @@ The default profile is \"pedestrian\" (very low velocity), which is not suited f
                         .action(ArgAction::SetTrue)
                         .help("Define airplane profile (high velocity).
 The default profile is \"pedestrian\" (very low velocity), which is not suited for very fast moving rovers."))
-                        .arg(
-                            Arg::new("rocket")
-                                .long("rocket")
-                                .action(ArgAction::SetTrue)
-                                .help("Define rocket profile (very high velocity).
-                                The default profile is \"pedestrian\" (very low velocity), which is not suited for very fast moving rovers."))
-        .arg(
+                .arg(
+                    Arg::new("rocket")
+                        .long("rocket")
+                        .action(ArgAction::SetTrue)
+                        .help("Define rocket profile (very high velocity).
+The default profile is \"pedestrian\" (very low velocity), which is not suited for very fast moving rovers."))
+            .arg(
             Arg::new("quartz")
                 .long("quartz")
                 .action(ArgAction::SetTrue)
@@ -102,7 +102,7 @@ pub fn ppp_subcommand() -> Command {
     let cmd = Command::new("ppp")
         .arg_required_else_help(false)
         .about(
-            "Post Processed Positioning. Use this mode to deploy the precise position solver.
+            "Post-processed PPP (absolute navigation).
 The solutions are added to the final report as an extra chapter. See --help",
         )
         .long_about(
@@ -157,14 +157,15 @@ pub fn rtk_subcommand() -> Command {
     let cmd = Command::new("rtk")
         .arg_required_else_help(true)
         .about(
-            "Post Processed RTK. Use this mode to deploy the precise differential positioning.
-The initial context describes the Rover context. rtk accepts `--fp,f` once again, to describe the base station.
-Other positioning flags still apply (like -c). See --help.",
+            "Post-processed RTK (differential navigation).
+The initial context describes the rover context. 
+Use rtk --fp,-f to describe the base station, with at least one RINEX file (mandatory).
+The solutions are added to the final report, as an extra chapter. See --help.",
         )
         .long_about(
             "RTK post opmode resolves PVT solutions by (post processed) differential navigation.
 The initial context (-f, -d) describes the ROVER.
-`rtk` also accepts -f and -d and you need to use those to describe the BASE (mandatory)."
+`rtk` also accepts -f and -d and you need to use those to describe the base station (mandatory).",
         )
         .arg(
             Arg::new("fp")
@@ -172,7 +173,7 @@ The initial context (-f, -d) describes the ROVER.
                 .value_name("FILE")
                 .action(ArgAction::Append)
                 .required_unless_present("dir")
-                .help("Base station Observation RINEX file(s), one at a time, as many as needed.")
+                .help("Base station Observation RINEX file(s), one at a time, as many as needed."),
         )
         .arg(
             Arg::new("dir")
@@ -180,7 +181,9 @@ The initial context (-f, -d) describes the ROVER.
                 .value_name("DIR")
                 .action(ArgAction::Append)
                 .required_unless_present("fp")
-                .help("Base station Observation RINEX directory, one at a time, as many as needed.")
+                .help(
+                    "Base station Observation RINEX directory, one at a time, as many as needed.",
+                ),
         );
     shared_args(cmd)
 }

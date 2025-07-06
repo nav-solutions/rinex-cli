@@ -36,7 +36,7 @@ pub fn resolve<
     ctx: &Context,
     user_params: UserParameters,
     mut solver: Solver<EPH, ORB, EB, SB, TIM>,
-    ephemeris_buffer: RefMut<EphemerisBuffer<'a>>,
+    ephemeris_buffer: &mut RefMut<EphemerisBuffer<'a>>,
 ) -> BTreeMap<Epoch, PVTSolution> {
     let mut past_epoch = Option::<Epoch>::None;
 
@@ -49,6 +49,8 @@ pub fn resolve<
     let mut sv_observations = HashMap::<SV, Vec<Observation>>::new();
 
     for (epoch, signal) in obs_data.signal_observations_sampling_ok_iter() {
+        ephemeris_buffer.new_epoch(epoch);
+
         let carrier = Carrier::from_observable(signal.sv.constellation, &signal.observable);
 
         if carrier.is_err() {

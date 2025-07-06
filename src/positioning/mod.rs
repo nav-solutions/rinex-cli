@@ -76,8 +76,16 @@ pub fn rtk_carrier_cast(carrier: RTKCarrier) -> Carrier {
 
 /// Converts [Carrier] to [RTKCarrier]
 pub fn cast_rtk_carrier(carrier: Carrier) -> Result<RTKCarrier, RTKError> {
-    let freq_mhz = carrier.frequency_mega_hz();
-    RTKCarrier::from_frequency_mega_hz(freq_mhz)
+    match carrier {
+        Carrier::B1 => Ok(RTKCarrier::B1),
+        Carrier::B3 => Ok(RTKCarrier::B3),
+        Carrier::E5a5b => Ok(RTKCarrier::E5a5b),
+        Carrier::L1 => Ok(RTKCarrier::L1),
+        Carrier::E5b => Ok(RTKCarrier::E5b),
+        Carrier::L2 => Ok(RTKCarrier::L2),
+        Carrier::L5 => Ok(RTKCarrier::L5),
+        _ => Err(RTKError::UnknownCarrierFrequency),
+    }
 }
 
 // // helper in reference signal determination
@@ -254,17 +262,13 @@ If your dataset does not describe one, you can manually describe one, see --help
 
     let user_params = UserParameters::new(user_profile.clone(), clock_profile.clone());
 
+    let mut mutable_buffer = ephemeris_buffer.borrow_mut();
+
     // PPP+CGGTTS special case
     #[cfg(feature = "cggtts")]
     if matches.get_flag("cggtts") {
         //* CGGTTS special opmode */
-        let tracks = cggtts::resolve(
-            ctx,
-            cfg.method,
-            user_params,
-            solver,
-            ephemeris_buffer.borrow_mut(),
-        )?;
+        let tracks = cggtts::resolve(ctx, cfg.method, user_params, solver, &mut mutable_buffer)?;
 
         if !tracks.is_empty() {
             cggtts_post_process(&ctx, &tracks, matches)?;
@@ -278,7 +282,7 @@ If your dataset does not describe one, you can manually describe one, see --help
     }
 
     // PPP/RTK
-    let solutions = ppp::resolve(ctx, user_params, solver, ephemeris_buffer.borrow_mut());
+    let solutions = ppp::resolve(ctx, user_params, solver, &mut mutable_buffer);
 
     if !solutions.is_empty() {
         ppp_post_process(&ctx, &solutions, matches)?;

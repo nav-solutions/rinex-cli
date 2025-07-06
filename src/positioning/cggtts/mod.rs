@@ -96,7 +96,7 @@ pub fn resolve<
     method: Method,
     params: UserParameters,
     mut solver: Solver<EPH, ORB, EB, SB, TIM>,
-    ephemeris_buffer: RefMut<EphemerisBuffer<'a>>,
+    ephemeris_buffer: &mut RefMut<EphemerisBuffer<'a>>,
 ) -> Result<Vec<Track>, PositioningError> {
     let obs_data = ctx
         .data
@@ -137,6 +137,8 @@ pub fn resolve<
     let mut release = false;
 
     for (index, (epoch, signal)) in obs_data.signal_observations_sampling_ok_iter().enumerate() {
+        ephemeris_buffer.new_epoch(epoch);
+
         if index > 0 && epoch > past_t {
             if collecting {
                 info!("{} - new epoch", past_t);
