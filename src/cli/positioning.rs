@@ -160,7 +160,9 @@ pub fn rtk_subcommand() -> Command {
             "Post-processed RTK (differential navigation).
 The initial context describes the rover context. 
 Use rtk --fp,-f to describe the base station, with at least one RINEX file (mandatory).
-The solutions are added to the final report, as an extra chapter. See --help.",
+The RINEX file must describe the station position.
+RINEX-Cli is limited to static base! moving base is not feasible.
+The RTK solutions are added to the final report, as an extra chapter. See --help.",
         )
         .long_about(
             "RTK post opmode resolves PVT solutions by (post processed) differential navigation.

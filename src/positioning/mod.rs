@@ -1,8 +1,3 @@
-use crate::cli::{Cli, Context};
-use clap::ArgMatches;
-use std::cell::RefCell;
-use std::fs::read_to_string;
-
 mod buffer;
 mod coords;
 mod orbit;
@@ -35,10 +30,12 @@ use ppp::{
     Report as PPPReport,
 };
 
+use rtk::RTKBaseStation;
+
 #[cfg(feature = "cggtts")]
 use cggtts::{post_process as cggtts_post_process, Report as CggttsReport};
 
-use rinex::carrier::Carrier;
+use rinex::{carrier::Carrier, prelude::Rinex};
 
 use gnss_qc::prelude::QcExtraPage;
 
@@ -48,6 +45,11 @@ use gnss_rtk::prelude::{
 };
 
 use thiserror::Error;
+
+use crate::cli::{Cli, Context};
+use clap::ArgMatches;
+use std::cell::RefCell;
+use std::fs::read_to_string;
 
 #[derive(Debug, Error)]
 pub enum Error {
@@ -181,10 +183,14 @@ pub fn precise_positioning(
         }
     }
 
+    let obs = Rinex::basic_obs();
+
     // Deploy base station if needed
-    if uses_rtk {
-        panic!("rtk: oops");
-    }
+    let base_station = if uses_rtk {
+        Some(RTKBaseStation::new(&obs))
+    } else {
+        None
+    };
 
     // print config to be used
     info!("Using {:?} method", cfg.method);

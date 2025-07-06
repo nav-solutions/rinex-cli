@@ -1,5 +1,3 @@
-// Ephemeris interface is not used by this application
-
 use gnss_rtk::prelude::{Ephemeris as RawEphemeris, EphemerisSource, Epoch, SV};
 
 use rinex::navigation::Ephemeris;
@@ -21,6 +19,7 @@ impl EphemerisSource for NullEphemerisSource {
     }
 }
 
+#[derive(Clone)]
 pub struct EphemerisFrame {
     /// [SV]
     pub sv: SV,
@@ -48,20 +47,30 @@ pub struct EphemerisBuffer<'a> {
 
 impl<'a> EphemerisBuffer<'a> {
     pub fn new_epoch(&mut self, epoch: Epoch) {
-        // iterate until EoS or frame becomes future + invalid
-        if !self.eos {
-            loop {
-                if let Some(frame) = self.iter.next() {
-                    if frame.toe > epoch && !frame.ephemeris.is_valid(frame.sv, epoch) {
-                        self.buffer.push(frame);
-                        break;
-                    }
+        // discard past invalid
+        self.buffer.retain(|frm| {
+            if frm.toe < epoch {
+                frm.ephemeris.is_valid(frm.sv, epoch)
+            } else {
+                true
+            }
+        });
 
+        // iterate until EoS or frame becomes future + invalid
+        loop {
+            if self.eos {
+                break;
+            }
+
+            if let Some(frame) = self.iter.next() {
+                if frame.toe > epoch && !frame.ephemeris.is_valid(frame.sv, epoch) {
                     self.buffer.push(frame);
-                } else {
-                    self.eos = true;
                     break;
                 }
+
+                self.buffer.push(frame);
+            } else {
+                self.eos = true;
             }
         }
     }
@@ -97,86 +106,17 @@ impl<'a> EphemerisBuffer<'a> {
 
         s
     }
-}
 
-// pub struct EphemerisFrame {
-//     pub sv: SV,
-// }
-//
-// pub struct EphemerisSource<'a> {
-//     sv: SV,
-//     eos: bool,
-//     toc: Epoch,
-//     buffer: HashMap<SV, Vec<(Epoch, Epoch, Ephemeris)>>,
-//     iter: Box<dyn Iterator<Item = (SV, Epoch, Epoch, &'a Ephemeris)> + 'a>,
-// }
-//
-// impl<'a> EphemerisSource<'a> {
-//     /// Consume one entry from [Iterator]
-//     fn consume_one(&mut self) {
-//         if let Some((sv, toc, toe, eph)) = self.iter.next() {
-//             if let Some(buffer) = self.buffer.get_mut(&sv) {
-//                 buffer.push((toc, toe, eph.clone()));
-//             } else {
-//                 self.buffer.insert(sv, vec![(toc, toe, eph.clone())]);
-//             }
-//             self.sv = sv;
-//             self.toc = toc;
-//         } else {
-//             if !self.eos {
-//                 info!("{}({}): consumed all epochs", self.toc, self.sv);
-//             }
-//             self.eos = true;
-//         }
-//     }
-//
-//     /// Consume n entries from [Iterator]
-//     fn consume_many(&mut self, n: usize) {
-//         for _ in 0..n {
-//             self.consume_one();
-//         }
-//     }
-//
-//     /// [Ephemeris] selection attempt, for [SV] at [Epoch]
-//     fn try_select(&self, t: Epoch, sv: SV) -> Option<(Epoch, Epoch, &Ephemeris)> {
-//         let buffer = self.buffer.get(&sv)?;
-//
-//         if sv.constellation.is_sbas() {
-//             buffer
-//                 .iter()
-//                 .filter_map(|(toc_i, toe_i, eph_i)| {
-//                     if t >= *toc_i {
-//                         Some((*toc_i, *toe_i, eph_i))
-//                     } else {
-//                         None
-//                     }
-//                 })
-//                 .min_by_key(|(toc_i, _, _)| (t - *toc_i).abs())
-//         } else {
-//             buffer
-//                 .iter()
-//                 .filter_map(|(toc_i, toe_i, eph_i)| {
-//                     if eph_i.is_valid(sv, t) {
-//                         Some((*toc_i, *toe_i, eph_i))
-//                     } else {
-//                         None
-//                     }
-//                 })
-//                 .min_by_key(|(_, toe_i, _)| (t - *toe_i).abs())
-//         }
-//     }
-//
-//     /// [Ephemeris] selection at [Epoch] for [SV].
-//     pub fn select(&mut self, t: Epoch, sv: SV) -> Option<(Epoch, Epoch, Ephemeris)> {
-//         loop {
-//             if let Some((toc_i, toe_i, eph_i)) = self.try_select(t, sv) {
-//                 return Some((toc_i, toe_i, eph_i.clone()));
-//             } else {
-//                 self.consume_one();
-//                 if self.eos {
-//                     return None;
-//                 }
-//             }
-//         }
-//     }
-// }
+    pub fn select_sv_ephemeris(&self, epoch: Epoch, sv: SV) -> Option<EphemerisFrame> {
+        if sv.constellation.is_sbas() {
+            error!("{} - sbas not supported yet!", epoch);
+            None
+        } else {
+            self.buffer
+                .iter()
+                .filter(|frm| frm.sv == sv && frm.ephemeris.is_valid(sv, epoch))
+                .min_by_key(|frm| (epoch - frm.toe).abs())
+                .cloned()
+        }
+    }
+}

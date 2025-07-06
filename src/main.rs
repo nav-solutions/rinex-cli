@@ -73,7 +73,6 @@ fn user_data_parsing(
     single_files: Vec<&String>,
     directories: Vec<&String>,
     max_depth: usize,
-    is_rover: bool,
 ) -> QcContext {
     let mut ctx = QcContext::new();
 
@@ -178,18 +177,7 @@ fn user_data_parsing(
     // Preprocessing
     context_preprocessing(&mut ctx, cli);
 
-    match cli.matches.subcommand() {
-        Some(("rtk", _)) => {
-            if is_rover {
-                debug!("ROVER Dataset: {:?}", ctx);
-            } else {
-                error!("BASE STATION Dataset: {:?}", ctx);
-            }
-        },
-        _ => {
-            debug!("{:?}", ctx);
-        },
-    }
+    debug!("{:?}", ctx);
 
     ctx
 }
@@ -216,7 +204,6 @@ pub fn main() -> Result<(), Error> {
         cli.rover_files(),
         cli.rover_directories(),
         max_recursive_depth,
-        true,
     );
 
     let ctx_stem = Context::context_stem(&mut data_ctx);
