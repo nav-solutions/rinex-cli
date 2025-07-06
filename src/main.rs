@@ -340,6 +340,7 @@ pub fn main() -> Result<(), Error> {
             let chapter = positioning::precise_positioning(&ctx, true, submatches)?;
             extra_pages.push(chapter);
         },
+
         _ => {},
     }
 

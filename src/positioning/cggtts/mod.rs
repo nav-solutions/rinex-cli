@@ -2,6 +2,7 @@
 use std::collections::HashMap;
 
 use std::cell::{RefCell, RefMut};
+use std::rc::Rc;
 
 mod post_process;
 pub use post_process::post_process;
@@ -85,7 +86,6 @@ fn rinex_ref_observable(
 /// Resolves CGGTTS tracks from input context
 pub fn resolve<
     'a,
-    'b,
     EPH: EphemerisSource,
     ORB: OrbitSource,
     EB: EnvironmentalBias,
@@ -96,7 +96,7 @@ pub fn resolve<
     method: Method,
     params: UserParameters,
     mut solver: Solver<EPH, ORB, EB, SB, TIM>,
-    ephemeris_buffer: &mut EphemerisBuffer<'a>,
+    ephemeris_buffer: Rc<RefCell<EphemerisBuffer<'a>>>,
 ) -> Result<Vec<Track>, PositioningError> {
     let obs_data = ctx
         .data
@@ -137,7 +137,7 @@ pub fn resolve<
     let mut release = false;
 
     for (index, (epoch, signal)) in obs_data.signal_observations_sampling_ok_iter().enumerate() {
-        ephemeris_buffer.new_epoch(epoch);
+        ephemeris_buffer.borrow_mut().new_epoch(epoch);
 
         if index > 0 && epoch > past_t {
             if collecting {

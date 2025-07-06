@@ -42,7 +42,7 @@ use rinex::{carrier::Carrier, prelude::Rinex};
 use gnss_qc::prelude::QcExtraPage;
 
 use gnss_rtk::prelude::{
-    Carrier as RTKCarrier, ClockProfile, Config, Duration, Error as RTKError, Method, Solver,
+    Carrier as RTKCarrier, ClockProfile, Config, Duration, Error as RTKError, Method, Rc, Solver,
     UserParameters, UserProfile,
 };
 
@@ -109,31 +109,10 @@ pub fn precise_positioning(
             let cfg: Config = serde_json::from_str(&content)
                 .unwrap_or_else(|e| panic!("failed to parse configuration: {}", e));
 
-            /*
-             * CGGTTS special case
-             */
-            #[cfg(not(feature = "cggtts"))]
-            if matches.get_flag("cggtts") {
-                panic!("--cggtts option not available: compile with cggtts option");
-            }
-
-            info!("Using custom solver configuration: {:#?}", cfg);
             cfg
         },
         None => {
-            let method = Method::default();
-
-            let cfg = Config::default().with_navigation_method(method);
-
-            /*
-             * CGGTTS special case
-             */
-            #[cfg(not(feature = "cggtts"))]
-            if matches.get_flag("cggtts") {
-                panic!("--cggtts option not available: compile with cggtts option");
-            }
-
-            info!("Using {:?} default preset: {:#?}", method, cfg);
+            let cfg = Config::default();
             cfg
         },
     };
@@ -148,6 +127,16 @@ pub fn precise_positioning(
         ctx.data.brdc_navigation().is_some(),
         "Positioning requires Navigation RINEX"
     );
+
+    /*
+     * CGGTTS special case
+     */
+    #[cfg(not(feature = "cggtts"))]
+    if matches.get_flag("cggtts") {
+        panic!("--cggtts option not available: compile with cggtts option");
+    }
+
+    info!("Using custom solver configuration: {:#?}", cfg);
 
     if let Some(obs_rinex) = ctx.data.observation() {
         if let Some(obs_header) = &obs_rinex.header.obs {
@@ -192,18 +181,14 @@ pub fn precise_positioning(
         None
     };
 
-    // print config to be used
-    info!("Using {:?} method", cfg.method);
-
     let time = Time::new(&ctx);
 
-    let mut ephemeris_buffer = EphemerisBuffer::new(&ctx);
-
-    let ref_cell = RefCell::new(&ephemeris_buffer);
+    let ephemeris_buffer = EphemerisBuffer::new(&ctx);
+    let ephemeris_buffer = Rc::new(RefCell::new(ephemeris_buffer));
 
     let env_biases = EnvironmentalBiases::new();
-    let orbits = Orbits::new(&ctx, &ref_cell);
-    let space_biases = SpacebornBiases::new(&ref_cell);
+    let orbits = Orbits::new(&ctx, Rc::clone(&ephemeris_buffer));
+    let space_biases = SpacebornBiases::new(Rc::clone(&ephemeris_buffer));
 
     // Ephemeris interface is not used by this application
     let null_eph = NullEphemerisSource::new();
@@ -274,7 +259,7 @@ If your dataset does not describe one, you can manually describe one, see --help
     #[cfg(feature = "cggtts")]
     if matches.get_flag("cggtts") {
         //* CGGTTS special opmode */
-        let tracks = cggtts::resolve(ctx, cfg.method, user_params, solver, &mut ephemeris_buffer)?;
+        let tracks = cggtts::resolve(ctx, cfg.method, user_params, solver, ephemeris_buffer)?;
 
         if !tracks.is_empty() {
             cggtts_post_process(&ctx, &tracks, matches)?;
@@ -288,7 +273,7 @@ If your dataset does not describe one, you can manually describe one, see --help
     }
 
     // PPP/RTK
-    let solutions = ppp::resolve(ctx, user_params, solver, &mut ephemeris_buffer);
+    let solutions = ppp::resolve(ctx, user_params, solver, ephemeris_buffer);
 
     if !solutions.is_empty() {
         ppp_post_process(&ctx, &solutions, matches)?;

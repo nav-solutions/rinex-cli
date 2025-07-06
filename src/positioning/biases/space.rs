@@ -1,16 +1,17 @@
 use log::info;
 
 use std::cell::RefCell;
+use std::rc::Rc;
 
 use gnss_rtk::prelude::{BiasRuntime, Duration, Epoch, SatelliteClockCorrection, SpacebornBias};
 
 use crate::positioning::EphemerisBuffer;
 
-pub struct SpacebornBiases<'a, 'b> {
-    buffer: &'a RefCell<&'a EphemerisBuffer<'b>>,
+pub struct SpacebornBiases<'a> {
+    buffer: Rc<RefCell<EphemerisBuffer<'a>>>,
 }
 
-impl<'a, 'b> SpacebornBias for SpacebornBiases<'a, 'b> {
+impl<'a> SpacebornBias for SpacebornBiases<'a> {
     fn clock_bias(&self, rtm: &BiasRuntime) -> SatelliteClockCorrection {
         if let Some(frm) = self.buffer.borrow().select_sv_ephemeris(rtm.epoch, rtm.sv) {
             if let Some(dt) = frm
@@ -44,8 +45,8 @@ impl<'a, 'b> SpacebornBias for SpacebornBiases<'a, 'b> {
     }
 }
 
-impl<'a, 'b> SpacebornBiases<'a, 'b> {
-    pub fn new(buffer: &'a RefCell<&'a EphemerisBuffer<'b>>) -> Self {
+impl<'a> SpacebornBiases<'a> {
+    pub fn new(buffer: Rc<RefCell<EphemerisBuffer<'a>>>) -> Self {
         info!("spaceborn biases created & deployed");
         Self { buffer }
     }
