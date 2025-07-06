@@ -8,7 +8,7 @@ RINEX-Cli
 [![MRSV](https://img.shields.io/badge/MSRV-1.82.0-orange?style=for-the-badge)](https://github.com/rust-lang/rust/releases/tag/1.82.0)
 [![License](https://img.shields.io/badge/license-MPL_2.0-orange?style=for-the-badge&logo=mozilla)](https://github.com/rtk-rs/rinex-cli/blob/main/LICENSE)
 
-`rinex-cli` is a command line tool to post process RINEX and SP3 files.
+`rinex-cli` is a command line tool to post-process RINEX and SP3 files.
 
 Because RINEX and SP3 cover many applications, `rinex-cli` can be used for many applications. 
 The most important being:
@@ -22,8 +22,10 @@ The most important being:
   - generate high level reports
 - Synthesis
   - generate RINEX (and soon SP3) from provided products
-- Post processed navigation (`ppp` mode) because it integrates a complete
-PVT solver (on `ppp` feature only)
+-  post-processed navigation (on `ppp` feature only) because it integrates a complete
+  - RINEX-Cli integrates a complete [P.V.T solution solver](https://github.com/rtk-rs/gnss-rtk)
+  - absolute navigation with `ppp` command line
+  - differential navigation with `rtk` command line, using one ground station
 - CGGTTS solutions solver (`ppp --cggtts` mode) by combining the `ppp` **and** `cggtts` options
 
 <div align="center">
