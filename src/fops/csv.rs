@@ -94,7 +94,7 @@ fn write_obs_rinex<P: AsRef<Path>>(rnx: &Rinex, path: P) -> Result<(), Error> {
         let flag = k.flag.to_string();
 
         let clk = if let Some(clk) = v.clock {
-            format!("{:.12}E", clk.offset_s)
+            format!("{:.15}E", clk.offset_s)
         } else {
             "None".to_string()
         };
@@ -102,7 +102,7 @@ fn write_obs_rinex<P: AsRef<Path>>(rnx: &Rinex, path: P) -> Result<(), Error> {
         for signal in v.signals.iter() {
             let sv = signal.sv.to_string();
             let code = signal.observable.to_string();
-            let value = format!("{:.12E}", signal.value);
+            let value = format!("{:.15E}", signal.value);
 
             let lli = if let Some(lli) = signal.lli {
                 format!("{:?}", lli)
@@ -147,16 +147,16 @@ fn write_joint_nav_obs_rinex(brdc: &Rinex, obs: &Rinex, path: &Path) -> Result<(
                     orbit_w.write_record(&[
                         &t_str,
                         &sv_str,
-                        &format!("{:.12E}", x_km),
-                        &format!("{:.12E}", y_km),
-                        &format!("{:.12E}", z_km),
+                        &format!("{:.15E}", x_km),
+                        &format!("{:.15E}", y_km),
+                        &format!("{:.15E}", z_km),
                     ])?;
 
                     if let Some(correction) = eph.clock_correction(toc, k.epoch, sv, 8) {
                         clk_w.write_record(&[
                             &t_str,
                             &sv_str,
-                            &format!("{:.12E}", correction.to_seconds()),
+                            &format!("{:.15E}", correction.to_seconds()),
                         ])?;
                     }
                 }
@@ -186,9 +186,9 @@ fn write_raw_nav_rinex(brdc: &Rinex, path: &Path) -> Result<(), Error> {
             write!(fd, "{}, ", msgtype)?;
             write!(fd, "{}, ", frmtype)?;
 
-            write!(fd, "bias (s), {:.12E}, ", bias)?;
-            write!(fd, "drift (s/s), {:.12E}, ", drift)?;
-            write!(fd, "drift_r (s/s2), {:.12E}, ", drift_r)?;
+            write!(fd, "bias (s), {:.15E}, ", bias)?;
+            write!(fd, "drift (s/s), {:.15E}, ", drift)?;
+            write!(fd, "drift_r (s/s2), {:.15E}, ", drift_r)?;
 
             write!(fd, "healthy, {}, ", eph.sv_healthy())?;
 
