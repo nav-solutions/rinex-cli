@@ -20,13 +20,13 @@ pub use report::Report;
 pub mod post_process;
 
 use gnss_rtk::prelude::{
-    AbsoluteTime, Bias, Candidate, Epoch, Observation, OrbitSource, PVTSolution, User, PPP,
+    AbsoluteTime, Bias, Candidate, Epoch, Observation, OrbitSource, PVTSolution, UserProfile, PPP,
 };
 
 pub fn resolve<'a, 'b, CK: ClockStateProvider, O: OrbitSource, B: Bias, T: AbsoluteTime>(
     ctx: &Context,
     eph: &'a RefCell<EphemerisSource<'b>>,
-    user_profile: User,
+    user_profile: UserProfile,
     mut clock: CK,
     mut solver: PPP<O, B, T>,
 ) -> BTreeMap<Epoch, PVTSolution> {

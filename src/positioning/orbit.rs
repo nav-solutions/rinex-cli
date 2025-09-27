@@ -34,7 +34,7 @@ impl<'a, 'b> Orbits<'a, 'b> {
 }
 
 impl OrbitSource for Orbits<'_, '_> {
-    fn next_at(&self, t: Epoch, sv: SV, frame: Frame) -> Option<Orbit> {
+    fn state_at(&self, t: Epoch, sv: SV, frame: Frame) -> Option<Orbit> {
         if self.has_precise {
             let mut precise_orbits = self.precise.borrow_mut();
             let orbit = precise_orbits.next_precise_at(t, sv, frame)?;
