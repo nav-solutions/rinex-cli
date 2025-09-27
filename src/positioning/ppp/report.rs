@@ -3,7 +3,8 @@ use std::collections::BTreeMap;
 
 use gnss_rtk::prelude::{
     Config as NaviConfig, Duration, Epoch, Method as NaviMethod, PVTSolution,
-    Profile as NaviProfile, TimeScale, User as UserProfile, SV,
+    TimeScale, UserProfile, SV,
+    UserParameters,
 };
 
 use gnss_qc::{
@@ -30,7 +31,7 @@ impl Render for ReportTab {
 
 struct Summary {
     method: NaviMethod,
-    profile: NaviProfile,
+    profile: UserProfile,
     orbit: String,
     first_epoch: Epoch,
     last_epoch: Epoch,
@@ -296,7 +297,7 @@ impl Summary {
     fn new(
         cfg: &NaviConfig,
         ctx: &Context,
-        user: &UserProfile,
+        user_params: &UserParameters,
         solutions: &BTreeMap<Epoch, PVTSolution>,
         x0_y0_z0_m: Option<(f64, f64, f64)>,
         lat0_long0_alt0_ddeg_ddeg_km: Option<(f64, f64, f64)>,
@@ -350,7 +351,7 @@ impl Summary {
                 }
             }
 
-            if user.profile == NaviProfile::Static {
+            if user.profile == UserProfile::Static {
                 // averaged coords
                 if let Some(averaged_latlongalt_ddeg_m) = &mut averaged_latlongalt_ddeg_m {
                     *averaged_latlongalt_ddeg_m = (
@@ -517,7 +518,7 @@ impl ReportContent {
                 for (index, (_, sol_i)) in solutions.iter().enumerate() {
                     let (lat_ddeg, long_ddeg, _) = sol_i.lat_long_alt_deg_deg_m;
 
-                    let modulo = if user_profile.profile == NaviProfile::Static {
+                    let modulo = if user_profile.profile == UserProfile::Static {
                         10
                     } else {
                         1
