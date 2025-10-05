@@ -65,7 +65,8 @@ features = [
 ]
 
 [dependencies.gnss-rtk]
-version = "0.8"
+git = "https://github.com/nav-solutions/gnss-rtk"
+rev = "bf0914fb9134eef35a3ef73bc105d5ec28fa783b"
 optional = true
 features = [
     "serde",

@@ -28,8 +28,6 @@ pub fn time_binning(
     ctx.workspace.create_subdir("BATCH");
 
     for product in [
-        ProductType::IONEX,
-        ProductType::DORIS,
         ProductType::Observation,
         ProductType::MeteoObservation,
         ProductType::BroadcastNavigation,

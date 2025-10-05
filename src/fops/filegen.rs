@@ -31,13 +31,11 @@ pub fn filegen(ctx: &Context, matches: &ArgMatches, submatches: &ArgMatches) -> 
 fn write(ctx: &Context, matches: &ArgMatches, submatches: &ArgMatches) -> Result<(), Error> {
     let ctx_data = &ctx.data;
     for (product, dir) in [
-        (ProductType::DORIS, "DORIS"),
         (ProductType::Observation, "OBSERVATIONS"),
         (ProductType::MeteoObservation, "METEO"),
         (ProductType::BroadcastNavigation, "BRDC"),
         (ProductType::HighPrecisionClock, "CLOCK"),
         (ProductType::HighPrecisionOrbit, "SP3"),
-        (ProductType::IONEX, "IONEX"),
         (ProductType::ANTEX, "ANTEX"),
     ] {
         if let Some(rinex) = ctx_data.rinex(product) {

@@ -64,14 +64,6 @@ pub fn merge(ctx: &Context, cli: &Cli, submatches: &ArgMatches) -> Result<(), Er
                 rinex_a.merge(&rinex_b)?,
             )
         },
-        RinexType::IonosphereMaps => {
-            let rinex_a = ctx_data.ionex().ok_or(Error::MissingIONEX)?;
-
-            (
-                rinex_a.standard_filename(short_v2_name, None, None),
-                rinex_a.merge(&rinex_b)?,
-            )
-        },
         RinexType::ClockData => {
             let rinex_a = ctx_data.clock().ok_or(Error::MissingClockRinex)?;
 

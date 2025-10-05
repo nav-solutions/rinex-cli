@@ -243,7 +243,7 @@ If your dataset does not describe one, you can manually describe one, see --help
     } else if matches.get_flag("atomic") {
         ClockProfile::Atomic
     } else if matches.get_flag("h-maser") {
-        ClockProfile::H_MASER
+        ClockProfile::HydrogenMaser
     } else {
         ClockProfile::Oscillator
     };

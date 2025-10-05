@@ -21,7 +21,6 @@ pub fn split(ctx: &Context, submatches: &ArgMatches) -> Result<(), Error> {
         ProductType::MeteoObservation,
         ProductType::BroadcastNavigation,
         ProductType::HighPrecisionClock,
-        ProductType::IONEX,
     ] {
         if let Some(rinex) = ctx_data.rinex(product) {
             let (rinex_a, rinex_b) = rinex.split(*split_instant);
