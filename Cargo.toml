@@ -64,12 +64,10 @@ features = [
 ]
 
 [dependencies.gnss-rtk]
-git = "https://github.com/rtk-rs/gnss-rtk"
-rev = "d244eeac9c88f8cf86ee939cae6fb057e956a13d"
+version = "0.8"
 optional = true
 features = [
     "serde",
-    "embed_ephem"
 ]
 
 [dependencies]
