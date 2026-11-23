@@ -1,6 +1,6 @@
 [submodule "data"]
 	path = data
-	url = https://github.com/rtk-rs/data
+	url = https://github.com/nav-solutions/data
 [submodule "tools"]
 	path = tools
-	url = https://github.com/rtk-rs/tools
+	url = https://github.com/nav-solutions/tools
