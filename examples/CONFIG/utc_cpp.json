@@ -1,4 +1,6 @@
 {
-    "method": "CPP",
-    "timescale": "UTC"
+    "solver": {
+        "method": "CPP",
+        "timescale": "UTC"
+    }
 }

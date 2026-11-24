@@ -1,4 +1,6 @@
 {
-    "method": "PPP",
-    "timescale": "GPST"
+    "solver": {
+        "method": "PPP",
+        "timescale": "GPST"
+    }
 }

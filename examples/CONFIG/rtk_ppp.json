@@ -1,0 +1,14 @@
+{
+    "technique": {
+        "Rtk": {
+            "base": { "Custom": "MOJN" },
+            "position_ecef_m": null
+        }
+    },
+    "rover": { "Custom": "ESBC" },
+    "constellations": ["GPS", "Galileo"],
+    "solver": {
+        "method": "PPP",
+        "timescale": "GPST"
+    }
+}

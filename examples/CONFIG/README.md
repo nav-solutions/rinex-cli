@@ -1,8 +1,26 @@
 Configuration presets
 =====================
 
-Configuration & parametrization example. Most of the examples and demonstrations released
-with this repo use one of these scripts. You can use them as a starting point.
+Navigation configuration examples (`nav --cfg FILE.json`, `cggtts --cfg FILE.json`).
+They describe a GNSS-Qc `QcNavigationConfig` and may be *partial*: every field that is not
+described keeps its default value (CPP, GPS + Galileo, automatic orbits and clocks, pedestrian profile).
+The command line options (`--method`, `-c`, `--orbits`, `--static`, `--base`..) take precedence
+over the configuration file.
+
+```json
+{
+    "technique": { "Rtk": { "base": { "Custom": "MOJN" }, "position_ecef_m": null } },
+    "rover": { "Custom": "ESBC" },
+    "constellations": ["GPS", "Galileo"],
+    "solver": { "method": "PPP", "timescale": "GPST" }
+}
+```
+
+- `technique`: `"Absolute"` (default) or `{ "Rtk": { "base": PRODUCT, "position_ecef_m": [x, y, z] | null } }`
+- `rover`, `base`: signal sources, as listed by the `index` command
+(`{ "Custom": "ALIAS" }`, `{ "Receiver": "..." }`, `{ "Antenna": "..." }`..)
+- `solver`: GNSS-RTK solver configuration (`method`, `timescale`, `min_sv_elev`, modeling..)
+- [rtk_ppp.json](./rtk_ppp.json): RTK-PPP, rover ESBC and base MOJN (see the [RTK examples](../RTK))
 
 Timescale
 =========
