@@ -1,51 +1,88 @@
 Post Processed Positioning
 ==========================
 
-`rinex-cli` offers RINEX and SP3 exploitation for high precision post processed navigation.
+The `nav` command (`navigation` feature) deploys the GNSS-RTK solver on your products and resolves
+P.V.T solutions of one signal source (the *rover*). It is dedicated to post processing: the inputs are files
+(RINEX, CRINEX, SP3, Clock RINEX..). It replaces the `ppp` mode of rinex-cli v0.13 (the `ppp` cargo feature remains as a legacy alias of `navigation`).
 
-This page describes the basic of the `ppp` mode, which combines
-your RINEX files and deploys a position solver. It is dedicated to post-processing
-navigation, because we only accept text files as input. This mode is kind of like
-an equivalent or modern replacement of some of the options you might find in the RTKLib toolkit.
+```bash
+rinex-cli \
+    -f data/CRNX/V3/ESBC00DNK_R_20201770000_01D_30S_MO.crx.gz \
+    -f data/NAV/V3/ESBC00DNK_R_20201770000_01D_MN.rnx.gz \
+    -f data/SP3/C/GRG0MGXFIN_20201770000_01D_15M_ORB.SP3.gz \
+    -f data/CLK/V3/GRG0MGXFIN_20201770000_01D_30S_CLK.CLK.gz \
+    --report html,pdf \
+    nav --method ppp --static
+```
 
-You can summon `ppp` after a preprocessing pipeline. This is how we can
-focus on specific constellations or signals.
+Techniques
+==========
 
-RINEX-Cli behavior
-==================
+- **Absolute** navigation (default): position and receiver clock are resolved from one signal source
+- **RTK** (differential) navigation, relative to a base station: `--base PRODUCT`.
+See the [RTK documentation](./RTK.md)
 
-The tool's behavior is dictated by the input products.  
-If you only provide RINEX products, you place yourself in the ""real-time"" scenario,
-that we detail in a [dedicated chapter of our examples](../examples/PPP/BRDC).
+Methods
+=======
 
-If you stack SP3 or special RINEX products, you will place yourself in a post-processing scenario,
-which will give the best results you can obtain without access to a reference station.
-This is typically the task required when setting up and defining new reference station.
+| `--method` | Measurements | Typical use |
+|------------|--------------|-------------|
+| `spp` | one pseudo range (single frequency) | basic receivers; the ionosphere is modeled |
+| `cpp` (default) | two pseudo ranges, iono free combination | geodetic receivers, broadcast products |
+| `ppp` | two pseudo ranges and two phases, iono free combination | geodetic receivers, precise products |
 
-Other key elements defined by your input products:
+The selected method must be compatible with the observed signals: CPP and PPP require two frequencies
+per satellite. A satellite that does not provide them is not used.
 
-- the time frame: we will consume all signal observations. If you may reduce the time frame
-with a filter, this will reduce the observations we may consume
+Input products
+==============
 
-- the navigation RINEX should cover your signal observations. Any signal observation that
-is not covered by a navigation message cannot serve in the PPP process. It is identical
-to discarding it with a filter
+The input products define the scenario:
 
-- We have no limitations on the number of input RINEX. If you take standard RINEX publications
-and stack two of them, you will then survey for 48 hours.
+- with observation and navigation RINEX only, you are in the "real time" scenario: broadcast orbits and clocks
+- add SP3 (precise orbits) and Clock RINEX (precise clocks) for the post processed scenario, which
+gives the best results you can obtain without a reference station.
+`--orbits auto|precise|broadcast` selects the orbital products (`auto`: precise whenever they cover the satellite)
+- the processing window is defined by the products, and can be reduced with `--start` / `--end`
+- the navigation RINEX should cover your observations: a satellite without ephemeris (or precise state)
+cannot contribute
+- any number of files may be stacked: two daily RINEX of the same station are merged (48 hours)
 
-- Observed signals: available signal observations must be compatible with the navigation technique being
-used. The navigation technique is defined in the `GNSS-RTK` configuration script, which is optionnally
-passed with `-c` after `ppp` mode selection (see our example scripts). If you select a technique
-using a combination of signals yet only provide one signal, the algorithm will not be able to deploy.
+Several signal sources may be loaded (`index` lists them): `--rover` selects the one to navigate.
+
+Options
+=======
+
+| Option | Role |
+|--------|------|
+| `--method spp\|cpp\|ppp` | Navigation method |
+| `--rover PRODUCT` | Signal source to navigate. Default: the first one |
+| `-c gps,gal` | Constellations (gps, gal, bds, qzss). Default: GPS and Galileo |
+| `--orbits auto\|precise\|broadcast` | Orbital products preference |
+| `--profile`, `--static` | User profile (dynamics of the navigation filter): static, pedestrian (default), car, airplane, rocket |
+| `--clock` | Receiver clock profile: quartz (default), oscillator, atomic, hydrogen-maser |
+| `--apriori x,y,z\|header` | A priori position. Default: none, the solver surveys from scratch |
+| `--reference x,y,z` | Reference position to express the errors. Default: the RINEX header of the rover |
+| `--base PRODUCT`, `--base-position x,y,z` | RTK navigation, see [RTK](./RTK.md) |
+| `--cfg nav.json` | Navigation configuration (GNSS-Qc `QcNavigationConfig`), may be partial, see [examples/CONFIG](../examples/CONFIG) |
+| `--anise-dir DIR` | ANISE dataset (`GNSS_QC_ANISE_DIR`) |
+| `--gpx`, `--kml` | Also format the solutions as GPX / KML tracks |
+
+The command line options take precedence over the configuration file.
+The preprocessing options (`-G`, `-E`.., `-P` filters) apply before the navigation:
+this is how you focus on specific satellites or signals.
+
+Outputs
+=======
+
+- `data/solutions.csv`: one solution per epoch (ECEF and geodetic position, velocity, clock offset, DOPs, satellites)
+- report: errors with respect to the reference position (east, north, up), trajectory, receiver clock,
+DOPs, satellites, and the RTK baseline in RTK
+- `summary.json`: navigation context and end of session statistics
 
 Examples
 ========
 
-We host many [Navigation examples](../PPP) spanning all use cases.
-We recommend reading this page prior getting started.
-
-What next ?
-===========
-
-- [CGGTTS solutions solving](./CGGTTS.md)
+- [Absolute navigation examples](../examples/PPP)
+- [RTK examples](../examples/RTK): RTK-SPP, RTK-CPP, RTK-PPP compared on a 65 km baseline
+- [CGGTTS examples](../examples/CGGTTS): the `cggtts` command shares the navigation options

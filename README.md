@@ -21,7 +21,8 @@ and presents the results as data files and reports.
 ```
 
 - Quality control: sampling, data gaps, signal strength, lock losses, ephemeris coverage
-- Post processed navigation: SPP, CPP, PPP, RTK (`navigation` feature)
+- Post processed navigation: SPP, CPP, PPP (`navigation` feature)
+- RTK (differential) navigation: RTK-SPP, RTK-CPP, RTK-PPP, with the baseline in the report
 - CGGTTS solutions: common view time transfer (`cggtts` feature)
 - Residual analysis: receiver A − receiver B, orbital product A − product B,
   clock product A − product B (two analysis centers)
@@ -139,7 +140,7 @@ model. The JSON lines deserialize into `gnss_qc::prelude::QcOutputItem` (serde f
 |---------|-------------|
 | `index` | Lists the input products, as indexed (`--json`) |
 | `qc` | Quality control of the signal sources |
-| `nav` | P.V.T solutions: `--method spp\|cpp\|ppp`, `--rover`, `--base` (RTK), `--orbits auto\|precise\|broadcast`, `-c gps,gal`, `--profile`, `--static`, `--clock`, `--apriori`, `--reference`, `--cfg nav.json`, `--anise-dir`, `--gpx`, `--kml` |
+| `nav` | P.V.T solutions: `--method spp\|cpp\|ppp`, `--rover`, `--base` / `--base-position` (RTK), `--orbits auto\|precise\|broadcast`, `-c gps,gal`, `--profile`, `--static`, `--clock`, `--apriori`, `--reference`, `--cfg nav.json`, `--anise-dir`, `--gpx`, `--kml`. See [navigation](documentation/PPP.md) and [RTK](documentation/RTK.md) |
 | `cggtts` | CGGTTS solutions, same navigation options + `--station`, `--frame`, `--min-track`, `--solutions` |
 | `residuals obs` | Receiver A − receiver B: `--lhs`, `--rhs`, `--all`, `--tolerance` |
 | `residuals orbit` | Product A − product B: `--lhs`, `--rhs` (`sp3`, `sp3:PRODUCT`, `nav`, `nav:PRODUCT`), `--sampling`, `--max-age`, `-c` |
@@ -175,7 +176,7 @@ local files with `--anise-dir DIR` (`$GNSS_QC_ANISE_DIR`): `de440s.bsp` and `pck
 | `ppp` | `nav --method spp\|cpp\|ppp` |
 | `rtk --fp BASE` | `-f base=BASE nav --base base` |
 | `ppp --cggtts` | `cggtts` |
-| `ppp -c cfg.json` (GNSS-RTK `Config`) | `nav --cfg nav.json` (GNSS-Qc `QcNavigationConfig`) |
+| `ppp -c cfg.json` (GNSS-RTK `Config`) | `nav --cfg nav.json` (GNSS-Qc `QcNavigationConfig`, may be partial: wrap the former content in `{ "solver": .. }`) |
 | `--nav healthy` | not supported yet |
 | `filegen --csv` | `qc --raw --data csv` |
 
