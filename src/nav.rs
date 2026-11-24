@@ -31,6 +31,10 @@ pub struct NavigationSetup {
     /// Reference position of the rover (ECEF m), to express the errors
     pub reference_ecef_m: Option<(f64, f64, f64)>,
 
+    /// Moving rover (user profile other than static): its RINEX header position is not a
+    /// reference, the solutions are presented as displacements
+    pub moving: bool,
+
     /// Configuration summary
     pub description: Vec<(String, String)>,
 }
@@ -268,8 +272,12 @@ pub fn configure(
         };
     }
 
+    // a moving rover has no reference position, unless designated
+    let moving = !args.is_static && args.profile.is_some_and(|p| p != ProfileArg::Static);
+
     let reference_ecef_m = match &args.reference {
         Some(text) => Some(parse_coordinates(text)?),
+        None if moving => None,
         None => inputs.reference_position(&rover).or(cfg.apriori_ecef_m),
     };
 
@@ -320,6 +328,7 @@ pub fn configure(
             base: base.as_ref().map(QcIndexing::to_string),
             base_ecef_m,
             reference_ecef_m,
+            moving,
             description,
         },
     ))
