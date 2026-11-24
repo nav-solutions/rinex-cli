@@ -36,6 +36,7 @@ table.kv th { width:220px; position:static; }
 .chart { width:100%; height:440px; margin:8px 0; }
 .chart.map { height:560px; }
 .chart.globe { height:420px; max-width:520px; }
+.chart.region { height:640px; }
 .chart.skyplot { height:640px; max-width:820px; }
 .chart.heatmap { height:620px; }
 footer { color:var(--muted); padding:16px 32px; }
@@ -253,14 +254,28 @@ fn timeline_json(timeline: &Timeline) -> Value {
 }
 
 fn chart_json(chart: &Chart) -> Value {
+    // series colored by value: one shared color scale
+    let first_colored = chart
+        .series
+        .iter()
+        .position(|s| s.colors.is_some() && !s.anchor);
+    let color_range = chart
+        .series
+        .iter()
+        .filter_map(|s| s.colors.as_ref())
+        .flatten()
+        .filter(|v| v.is_finite())
+        .fold((f64::MAX, f64::MIN), |(a, b), v| (a.min(*v), b.max(*v)));
+
     let traces = chart
         .series
         .iter()
-        .map(|series| {
+        .enumerate()
+        .map(|(index, series)| {
             let series = series.decimated(MAX_POINTS);
 
             match chart.kind {
-                ChartKind::Map | ChartKind::Globe => {
+                ChartKind::Map | ChartKind::Globe | ChartKind::Region => {
                     let kind = if chart.kind == ChartKind::Map {
                         "scattermap"
                     } else {
@@ -282,12 +297,37 @@ fn chart_json(chart: &Chart) -> Value {
                         trace["text"] = json!(vec![series.name.clone(); series.x.len()]);
                         trace["textposition"] = json!("top right");
                         trace["textfont"] = json!({"size": 13, "color": "#111"});
+                    } else if let Some(color) = &series.color {
+                        // track: solid line, labeled at its last point
+                        let last = series
+                            .x
+                            .iter()
+                            .zip(series.y.iter())
+                            .rposition(|(x, y)| x.is_finite() && y.is_finite());
+                        let text = (0..series.x.len())
+                            .map(|i| {
+                                if Some(i) == last {
+                                    series.name.clone()
+                                } else {
+                                    String::new()
+                                }
+                            })
+                            .collect::<Vec<_>>();
+                        trace["mode"] = json!("lines+text");
+                        trace["line"] = json!({"width": 2, "color": color});
+                        trace["text"] = json!(text);
+                        trace["textposition"] = json!("top right");
+                        trace["textfont"] = json!({"size": 10, "color": color});
                     } else if let Some(colors) = &series.colors {
+                        // one color scale for all the series, presented once
+                        let first = Some(index) == first_colored;
                         trace["marker"] = json!({
                             "size": 7,
                             "color": colors,
                             "colorscale": "Viridis",
-                            "showscale": true,
+                            "cmin": color_range.0,
+                            "cmax": color_range.1,
+                            "showscale": first,
                             "colorbar": {
                                 "title": {"text": chart.color_label.clone().unwrap_or_default()},
                                 "thickness": 14,
@@ -340,7 +380,10 @@ fn chart_json(chart: &Chart) -> Value {
         "hovermode": "closest",
     });
 
-    if chart.kind == ChartKind::Map || chart.kind == ChartKind::Globe {
+    if matches!(
+        chart.kind,
+        ChartKind::Map | ChartKind::Globe | ChartKind::Region
+    ) {
         let (lon_min, lon_max, lat_min, lat_max) = extent(chart);
         let center = json!({"lon": (lon_min + lon_max) / 2.0, "lat": (lat_min + lat_max) / 2.0});
 
@@ -351,6 +394,36 @@ fn chart_json(chart: &Chart) -> Value {
                 "zoom": map_zoom(lon_min, lon_max, lat_min, lat_max),
             });
             layout["legend"] = json!({"orientation": "h", "y": -0.02});
+        } else if chart.kind == ChartKind::Region {
+            // azimuthal projection centered on the points, fitted on them
+            let (lon0, lat0) = crate::report::geographic_center(
+                chart
+                    .series
+                    .iter()
+                    .flat_map(|s| s.x.iter().copied().zip(s.y.iter().copied())),
+            )
+            .unwrap_or_default();
+            layout["geo"] = json!({
+                "projection": {
+                    "type": "azimuthal equidistant",
+                    "rotation": {"lon": lon0, "lat": lat0},
+                },
+                "fitbounds": "locations",
+                "resolution": 50,
+                "showland": true,
+                "landcolor": "#e3e7d3",
+                "showocean": true,
+                "oceancolor": "#cfe3f3",
+                "showlakes": true,
+                "lakecolor": "#cfe3f3",
+                "showcountries": true,
+                "countrycolor": "#9aa5b1",
+                "showcoastlines": true,
+                "coastlinecolor": "#6b7a89",
+                "lataxis": {"showgrid": true, "gridcolor": "#bcc6d0", "dtick": 5},
+                "lonaxis": {"showgrid": true, "gridcolor": "#bcc6d0", "dtick": 10},
+            });
+            layout["legend"] = json!({"orientation": "v"});
         } else {
             layout["geo"] = json!({
                 "projection": {
@@ -491,7 +564,7 @@ pub fn render(report: &Report) -> String {
                                     format!("chart-{}", chart_index)
                                 };
                                 @let _ = charts.insert(id.clone(), chart_json(chart));
-                                div id=(id) class={ "chart" @if chart.kind == ChartKind::Map { " map" } @if chart.kind == ChartKind::Globe { " globe" } } {}
+                                div id=(id) class={ "chart" @if chart.kind == ChartKind::Map { " map" } @if chart.kind == ChartKind::Globe { " globe" } @if chart.kind == ChartKind::Region { " region" } } {}
                             }
                         },
                         Block::Skyplot(skyplot) => {

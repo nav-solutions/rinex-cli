@@ -211,7 +211,9 @@ pub fn render(report: &Report) -> Result<Vec<u8>, Error> {
                     figures.push((name.clone(), svg::render(chart).into_bytes()));
 
                     let mut caption = chart.title.clone();
-                    if chart.series.len() > 12 {
+                    if chart.series.len() > 12
+                        && !matches!(chart.kind, ChartKind::Map | ChartKind::Region)
+                    {
                         caption.push_str(&format!(" ({} series)", chart.series.len()));
                     }
 

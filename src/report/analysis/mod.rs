@@ -49,8 +49,13 @@ pub fn for_command(context: &SessionContext) -> Vec<Box<dyn Analysis>> {
             analyses.push(Box::new(navigation::NavigationAnalysis::new(context)));
         },
         #[cfg(feature = "ionex")]
-        "ipp" => analyses.push(Box::new(ipp::IppAnalysis::default())),
+        "ipp" => analyses.push(Box::new(ipp::IppAnalysis::new(context))),
         _ => {},
+    }
+
+    // processing commands: the quality control of the observations follows
+    if context.qc && context.command != "qc" {
+        analyses.push(Box::new(signals::SignalAnalysis::new(context)));
     }
 
     analyses

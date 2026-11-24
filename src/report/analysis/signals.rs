@@ -118,6 +118,9 @@ pub struct SignalAnalysis {
     ephemerides: HashMap<SV, Vec<QcKepler>>,
     /// Sky of each signal source
     skies: BTreeMap<String, SkyAccumulator>,
+    /// Signal sources positioned by the navigation solutions (instead of the RINEX header)
+    #[cfg_attr(not(feature = "navigation"), allow(dead_code))]
+    solved: BTreeSet<String>,
 }
 
 impl SignalAnalysis {
@@ -150,6 +153,13 @@ impl SignalAnalysis {
 impl Analysis for SignalAnalysis {
     fn consume(&mut self, item: &QcOutputItem) {
         match &item.payload {
+            // navigation: the sky view follows the receiver
+            #[cfg(feature = "navigation")]
+            QcOutput::PVTSolution(solution) => {
+                self.positions
+                    .insert(solution.receiver.to_string(), solution.solution.pos_m);
+                self.solved.insert(solution.receiver.to_string());
+            },
             QcOutput::Signal(signal) => {
                 let epoch = item.epoch;
                 let rx = self
@@ -273,7 +283,10 @@ impl Analysis for SignalAnalysis {
             };
             let (first, last) = (*first, *last);
 
-            let mut section = Section::new(&format!("receiver-{}", index), receiver);
+            let mut section = Section::new(
+                &format!("receiver-{}", index),
+                &format!("Observations: {}", receiver),
+            );
 
             let sampling = rx.sampling();
             let gaps = sampling.map(|dt| rx.gaps(dt)).unwrap_or_default();
@@ -381,7 +394,11 @@ impl Analysis for SignalAnalysis {
                 }
                 sky.push_blocks(
                     &mut section,
-                    "Sky plot (broadcast ephemerides, RINEX header position)",
+                    if self.solved.contains(receiver) {
+                        "Sky plot (broadcast ephemerides, position of the navigation solutions)"
+                    } else {
+                        "Sky plot (broadcast ephemerides, RINEX header position)"
+                    },
                     "Satellites observed, over time",
                 );
             }

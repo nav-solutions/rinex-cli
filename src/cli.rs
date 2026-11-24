@@ -226,6 +226,11 @@ pub struct OutputArgs {
     #[arg(long, global = true)]
     pub stdout: bool,
 
+    /// Processing commands (nav, cggtts, ipp, residuals obs): do not add the quality
+    /// control of the observations (signal sources, sky view, data gaps) to the report
+    #[arg(long, global = true)]
+    pub no_qc: bool,
+
     /// Report title. Default: session name.
     #[arg(long, global = true)]
     pub title: Option<String>,

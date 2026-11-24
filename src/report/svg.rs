@@ -83,6 +83,27 @@ fn format_tick(value: f64, step: f64) -> String {
     }
 }
 
+/// Coast line of a land ring: the ring outline, without its edges along the
+/// antimeridian (where Natural Earth splits the land masses).
+/// `project` returns the SVG coordinates of the visible points.
+fn coast_path(ring: &[(f64, f64)], project: impl Fn(f64, f64) -> Option<(f64, f64)>) -> String {
+    let on_antimeridian = |lon: f64| lon.abs() >= 179.99;
+    let mut path = String::new();
+    let mut previous: Option<f64> = None;
+    for (lon, lat) in ring.iter().chain(ring.first()) {
+        let cut = previous.is_some_and(|prev| on_antimeridian(prev) && on_antimeridian(*lon));
+        match project(*lon, *lat) {
+            Some((x, y)) => {
+                let pen = previous.is_some() && !cut;
+                let _ = write!(path, "{}{:.1},{:.1}", if pen { 'L' } else { 'M' }, x, y);
+                previous = Some(*lon);
+            },
+            None => previous = None,
+        }
+    }
+    path
+}
+
 fn escape(text: &str) -> String {
     text.replace('&', "&amp;")
         .replace('<', "&lt;")
@@ -92,7 +113,7 @@ fn escape(text: &str) -> String {
 /// Renders a chart as SVG
 pub fn render(chart: &Chart) -> String {
     match chart.kind {
-        ChartKind::Map => return render_map(chart),
+        ChartKind::Map | ChartKind::Region => return render_map(chart),
         ChartKind::Globe => return render_globe(chart),
         _ => {},
     }
@@ -156,7 +177,7 @@ pub fn render(chart: &Chart) -> String {
     let plot_w = WIDTH - MARGIN_LEFT - MARGIN_RIGHT;
     let plot_h = HEIGHT - MARGIN_TOP - MARGIN_BOTTOM;
 
-    let equal = chart.equal_axes || chart.kind == ChartKind::Map;
+    let equal = chart.equal_axes || matches!(chart.kind, ChartKind::Map | ChartKind::Region);
     if equal {
         // same scale on both axes
         let (sx, sy) = ((x_max - x_min) / plot_w, (y_max - y_min) / plot_h);
@@ -599,7 +620,10 @@ pub fn render_heatmap(heatmap: &Heatmap, frame: &HeatmapFrame) -> String {
 /// kilometers), north up, equal scales, with a scale bar. Remarkable points (stations) are
 /// labeled, series colored by value carry a color scale.
 pub fn render_map(chart: &Chart) -> String {
-    use crate::report::geo::local_plan;
+    use crate::report::geo::{land, local_plan, orthographic};
+
+    // regional map: land masses and graticule
+    let region = chart.kind == ChartKind::Region;
 
     const MAP_WIDTH: f64 = 720.0;
     const MAP_HEIGHT: f64 = 440.0;
@@ -629,12 +653,8 @@ pub fn render_map(chart: &Chart) -> String {
         );
     }
 
-    let lon0 = (points.iter().map(|p| p.0).fold(f64::MAX, f64::min)
-        + points.iter().map(|p| p.0).fold(f64::MIN, f64::max))
-        / 2.0;
-    let lat0 = (points.iter().map(|p| p.1).fold(f64::MAX, f64::min)
-        + points.iter().map(|p| p.1).fold(f64::MIN, f64::max))
-        / 2.0;
+    let (lon0, lat0) =
+        crate::report::geographic_center(points.iter().copied()).unwrap_or(points[0]);
 
     let plan = series
         .iter()
@@ -680,7 +700,8 @@ pub fn render_map(chart: &Chart) -> String {
     let mut svg = String::with_capacity(64 * 1024);
     let _ = write!(
         svg,
-        r##"<svg xmlns="http://www.w3.org/2000/svg" width="{w}" height="{h}" viewBox="0 0 {w} {h}" font-family="{f}" font-size="10"><rect x="{l}" y="{t}" width="{pw}" height="{ph}" fill="#f4f7f9" stroke="#9aa5b1" stroke-width="0.8"/>"##,
+        r##"<svg xmlns="http://www.w3.org/2000/svg" width="{w}" height="{h}" viewBox="0 0 {w} {h}" font-family="{f}" font-size="10"><rect x="{l}" y="{t}" width="{pw}" height="{ph}" fill="{bg}" stroke="#9aa5b1" stroke-width="0.8"/>"##,
+        bg = if region { "#cfe3f3" } else { "#f4f7f9" },
         w = MAP_WIDTH,
         h = MAP_HEIGHT,
         f = FONT,
@@ -748,6 +769,91 @@ pub fn render_map(chart: &Chart) -> String {
         LEFT, TOP, plot_w, plot_h
     );
 
+    if region {
+        // visible points of a polyline (lon, lat) as an SVG path, broken behind the horizon
+        let polyline = |points: &mut dyn Iterator<Item = (f64, f64)>| -> String {
+            let mut path = String::new();
+            let mut pen = false;
+            for (lon, lat) in points {
+                let (_, _, visible) = orthographic(lon0, lat0, lon, lat);
+                if visible {
+                    let (e, n) = local_plan(lon0, lat0, lon, lat);
+                    let _ = write!(
+                        path,
+                        "{}{:.1},{:.1}",
+                        if pen { 'L' } else { 'M' },
+                        px(e),
+                        py(n)
+                    );
+                }
+                pen = visible;
+            }
+            path
+        };
+
+        // land masses (clipped to the frame)
+        for ring in land() {
+            if !ring
+                .iter()
+                .any(|(lon, lat)| orthographic(lon0, lat0, *lon, *lat).2)
+            {
+                continue;
+            }
+            // fill: one continuous outline, points behind the horizon are pushed onto it
+            let mut path = String::new();
+            for (k, (lon, lat)) in ring.iter().enumerate() {
+                let (x, y, visible) = orthographic(lon0, lat0, *lon, *lat);
+                let (e, n) = if visible {
+                    local_plan(lon0, lat0, *lon, *lat)
+                } else {
+                    let rho = (x * x + y * y).sqrt().max(1.0E-12);
+                    let horizon = 6_371_008.8 * std::f64::consts::FRAC_PI_2;
+                    (horizon * x / rho, horizon * y / rho)
+                };
+                let _ = write!(
+                    path,
+                    "{}{:.1},{:.1}",
+                    if k == 0 { 'M' } else { 'L' },
+                    px(e),
+                    py(n)
+                );
+            }
+            if !path.is_empty() {
+                let coast = coast_path(ring, |lon, lat| {
+                    let (_, _, visible) = orthographic(lon0, lat0, lon, lat);
+                    visible.then(|| {
+                        let (e, n) = local_plan(lon0, lat0, lon, lat);
+                        (px(e), py(n))
+                    })
+                });
+                let _ = write!(
+                    svg,
+                    r##"<path d="{}Z" fill="#e3e7d3" stroke="none"/><path d="{}" fill="none" stroke="#6b7a89" stroke-width="0.6"/>"##,
+                    path, coast
+                );
+            }
+        }
+
+        // graticule: 5° or 10° depending on the extent
+        let step = if (e_max - e_min) > 2.0E6 { 10 } else { 5 };
+        for lat in (-85..=85).filter(|lat| lat % step == 0) {
+            let path = polyline(&mut (-360..=360).map(|k| (k as f64 * 0.5, lat as f64)));
+            let _ = write!(
+                svg,
+                r##"<path d="{}" fill="none" stroke="#9fb3c4" stroke-width="0.4"/>"##,
+                path
+            );
+        }
+        for lon in (-180..180).filter(|lon| lon % step == 0) {
+            let path = polyline(&mut (-178..=178).map(|k| (lon as f64, k as f64 * 0.5)));
+            let _ = write!(
+                svg,
+                r##"<path d="{}" fill="none" stroke="#9fb3c4" stroke-width="0.4"/>"##,
+                path
+            );
+        }
+    }
+
     // lines and points first, stations on top
     let mut order = (0..series.len()).collect::<Vec<_>>();
     order.sort_by_key(|i| series[*i].anchor);
@@ -781,6 +887,45 @@ pub fn render_map(chart: &Chart) -> String {
                     escape(&s.name)
                 );
             }
+        } else if let Some(track_color) = &s.color {
+            // track: solid line, broken over the gaps (NaN), labeled at its end
+            let mut path = String::new();
+            let mut pen = false;
+            for (e, n) in points.iter() {
+                if e.is_finite() && n.is_finite() {
+                    let _ = write!(
+                        path,
+                        "{}{:.1},{:.1}",
+                        if pen { 'L' } else { 'M' },
+                        px(*e),
+                        py(*n)
+                    );
+                    pen = true;
+                } else {
+                    pen = false;
+                }
+            }
+            let _ = write!(
+                svg,
+                r##"<path d="{}" fill="none" stroke="{}" stroke-width="1.4" stroke-linejoin="round"/>"##,
+                path, track_color
+            );
+            if let Some((e, n)) = points
+                .iter()
+                .rev()
+                .find(|(e, n)| e.is_finite() && n.is_finite())
+            {
+                let _ = write!(
+                    svg,
+                    r##"<circle cx="{x:.1}" cy="{y:.1}" r="2" fill="{c}"/><text x="{tx:.1}" y="{ty:.1}" font-size="8" fill="{c}">{label}</text>"##,
+                    x = px(*e),
+                    y = py(*n),
+                    tx = px(*e) + 3.0,
+                    ty = py(*n) - 3.0,
+                    c = track_color,
+                    label = escape(&s.name)
+                );
+            }
         } else if s.connected {
             let mut path = String::new();
             for (k, (e, n)) in points.iter().enumerate() {
@@ -798,23 +943,33 @@ pub fn render_map(chart: &Chart) -> String {
                 path
             );
         } else if let Some(colors) = &s.colors {
-            // track: thin line, then points colored by value
+            // track: thin line (interrupted over the gaps), then points colored by value
             let mut path = String::new();
-            for (k, (e, n)) in points.iter().enumerate() {
-                let _ = write!(
-                    path,
-                    "{}{:.1},{:.1}",
-                    if k == 0 { 'M' } else { 'L' },
-                    px(*e),
-                    py(*n)
-                );
+            let mut pen = false;
+            for (e, n) in points.iter() {
+                if e.is_finite() && n.is_finite() {
+                    let _ = write!(
+                        path,
+                        "{}{:.1},{:.1}",
+                        if pen { 'L' } else { 'M' },
+                        px(*e),
+                        py(*n)
+                    );
+                    pen = true;
+                } else {
+                    pen = false;
+                }
             }
             let _ = write!(
                 svg,
                 r##"<path d="{}" fill="none" stroke="#9aa5b1" stroke-width="0.6"/>"##,
                 path
             );
-            for ((e, n), v) in points.iter().zip(colors.iter()) {
+            for ((e, n), v) in points
+                .iter()
+                .zip(colors.iter())
+                .filter(|((e, n), v)| e.is_finite() && n.is_finite() && v.is_finite())
+            {
                 let t = (v - c_min) / (c_max - c_min).max(1.0E-12);
                 let _ = write!(
                     svg,
@@ -972,10 +1127,14 @@ pub fn render_globe(chart: &Chart) -> String {
         for (k, (x, y, _)) in projected.iter().enumerate() {
             let _ = write!(path, "{}{:.1},{:.1}", if k == 0 { 'M' } else { 'L' }, x, y);
         }
+        let coast = coast_path(ring, |lon, lat| {
+            let (x, y, visible) = project(lon, lat);
+            visible.then_some((x, y))
+        });
         let _ = write!(
             svg,
-            r##"<path d="{}Z" fill="#e3e7d3" stroke="#6b7a89" stroke-width="0.4"/>"##,
-            path
+            r##"<path d="{}Z" fill="#e3e7d3" stroke="none"/><path d="{}" fill="none" stroke="#6b7a89" stroke-width="0.4"/>"##,
+            path, coast
         );
     }
 
@@ -1013,7 +1172,58 @@ pub fn render_globe(chart: &Chart) -> String {
         );
     }
 
-    // points (all series): red circle around the location
+    // tracks
+    for s in chart
+        .series
+        .iter()
+        .filter(|s| s.color.is_some() && !s.anchor)
+    {
+        let mut path = String::new();
+        let mut pen = false;
+        for (lon, lat) in s.x.iter().zip(s.y.iter()) {
+            if !(lon.is_finite() && lat.is_finite()) {
+                pen = false;
+                continue;
+            }
+            let (x, y, visible) = project(*lon, *lat);
+            if visible {
+                let _ = write!(path, "{}{:.1},{:.1}", if pen { 'L' } else { 'M' }, x, y);
+            }
+            pen = visible;
+        }
+        let _ = write!(
+            svg,
+            r##"<path d="{}" fill="none" stroke="{}" stroke-width="1"/>"##,
+            path,
+            s.color.as_deref().unwrap_or("#1f77b4")
+        );
+    }
+
+    // stations
+    let anchors = chart.series.iter().filter(|s| s.anchor).collect::<Vec<_>>();
+    for s in anchors.iter() {
+        if let Some((x, y, _)) =
+            s.x.first()
+                .zip(s.y.first())
+                .map(|(lon, lat)| project(*lon, *lat))
+        {
+            let _ = write!(
+                svg,
+                r##"<circle cx="{x:.1}" cy="{y:.1}" r="4" fill="#d62728" stroke="#ffffff" stroke-width="1"/><text x="{tx:.1}" y="{ty:.1}" fill="#1d2733" font-weight="bold">{label}</text>"##,
+                x = x,
+                y = y,
+                tx = x + 7.0,
+                ty = y - 6.0,
+                label = escape(&s.name)
+            );
+        }
+    }
+
+    // otherwise (all series): red circle around the location
+    if !anchors.is_empty() {
+        svg.push_str("</svg>");
+        return svg;
+    }
     if let Some((x, y, _)) = points.first().map(|(lon, lat)| project(*lon, *lat)) {
         let _ = write!(
             svg,

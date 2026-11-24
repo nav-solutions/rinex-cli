@@ -85,7 +85,10 @@ rover (with the distance travelled, speed and altitude range), receiver clock, D
   zenith at the center, colored by constellation (hue) then satellite (shade)
   - a **visibility timeline**: one row per satellite, segments where it is used by the solver
   - the RTK baseline in RTK
-- `summary.json`: navigation context and end of session statistics
+  - then the quality control of the observations of every receiver, as in the `qc` report: sampling,
+  data gaps, satellites in view, signal strength, ephemeris coverage, and the sky plot of all the
+  satellites observed (broadcast ephemerides, seen from the navigation solutions). `--no-qc` removes it
+- `data/coverage.csv`: ephemeris coverage of the observations (quality control)
 - `summary.json`: navigation context and end of session statistics
 
 Examples

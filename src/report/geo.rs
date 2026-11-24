@@ -42,12 +42,27 @@ pub fn orthographic(lon0: f64, lat0: f64, lon: f64, lat: f64) -> (f64, f64, bool
 }
 
 /// Local plan around (lon0, lat0): east and north offsets (m) of (lon, lat),
-/// equirectangular approximation (local maps, a few tens of kilometers)
+/// azimuthal equidistant projection on the mean sphere (local and regional maps,
+/// valid at the poles). Points behind the horizon are meaningless, see [orthographic].
 pub fn local_plan(lon0: f64, lat0: f64, lon: f64, lat: f64) -> (f64, f64) {
-    const METERS_PER_DEGREE: f64 = 111_320.0;
-    let east = (lon - lon0) * METERS_PER_DEGREE * lat0.to_radians().cos();
-    let north = (lat - lat0) * 110_574.0;
-    (east, north)
+    const EARTH_RADIUS_M: f64 = 6_371_008.8;
+    let (l0, p0, l, p) = (
+        lon0.to_radians(),
+        lat0.to_radians(),
+        lon.to_radians(),
+        lat.to_radians(),
+    );
+    let cos_c = p0.sin() * p.sin() + p0.cos() * p.cos() * (l - l0).cos();
+    let x = p.cos() * (l - l0).sin();
+    let y = p0.cos() * p.sin() - p0.sin() * p.cos() * (l - l0).cos();
+    // angular distance, accurate for close points (sin c = |(x, y)|)
+    let rho = (x * x + y * y).sqrt();
+    let k = if rho > 0.0 {
+        rho.atan2(cos_c) / rho
+    } else {
+        1.0
+    };
+    (EARTH_RADIUS_M * k * x, EARTH_RADIUS_M * k * y)
 }
 
 #[cfg(test)]
@@ -71,6 +86,9 @@ mod test {
         let (_, _, visible) = orthographic(12.0, 79.0, -168.0, -79.0);
         assert!(!visible);
         let (e, n) = local_plan(12.0, 79.0, 12.0, 79.001);
-        assert!((n - 110.574).abs() < 1e-3 && e.abs() < 1e-9);
+        assert!((n - 111.195).abs() < 1e-3 && e.abs() < 1e-9);
+        // equidistant: 10° of arc along a meridian, across the pole
+        let (_, n) = local_plan(0.0, 85.0, 180.0, 85.0);
+        assert!((n - 10.0f64.to_radians() * 6_371_008.8).abs() < 1.0);
     }
 }

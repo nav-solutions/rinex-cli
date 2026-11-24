@@ -172,8 +172,13 @@ pub enum ChartKind {
     Map,
     /// World map (globe) centered on the points, to locate them:
     /// x is longitude, y is latitude (degrees)
-    #[cfg_attr(not(feature = "navigation"), allow(dead_code))]
+    #[cfg_attr(not(any(feature = "navigation", feature = "ionex")), allow(dead_code))]
     Globe,
+    /// Regional map (hundreds to thousands of kilometers), coast lines and graticule:
+    /// x is longitude, y is latitude (degrees). HTML: azimuthal projection fitted on
+    /// the points. PDF: azimuthal plan (kilometers), north up, land masses.
+    #[cfg_attr(not(feature = "ionex"), allow(dead_code))]
+    Region,
 }
 
 #[derive(Debug, Clone)]
@@ -187,6 +192,8 @@ pub struct Series {
     pub anchor: bool,
     /// One value per point, presented as a color scale (see [Chart::color_label])
     pub colors: Option<Vec<f64>>,
+    /// Map track: solid line of this color (hex), labeled at its last point
+    pub color: Option<String>,
 }
 
 impl Series {
@@ -198,11 +205,19 @@ impl Series {
             connected: false,
             anchor: false,
             colors: None,
+            color: None,
         }
     }
 
+    /// Map track: solid line of this color (hex), labeled at its last point
+    #[cfg_attr(not(feature = "ionex"), allow(dead_code))]
+    pub fn with_color(mut self, color: &str) -> Self {
+        self.color = Some(color.to_string());
+        self
+    }
+
     /// Remarkable point (station..): large marker, labeled
-    #[cfg_attr(not(feature = "navigation"), allow(dead_code))]
+    #[cfg_attr(not(any(feature = "navigation", feature = "ionex")), allow(dead_code))]
     pub fn anchor(mut self) -> Self {
         self.anchor = true;
         self
@@ -243,6 +258,7 @@ impl Series {
                 .colors
                 .as_ref()
                 .map(|c| c.iter().step_by(step).copied().collect()),
+            color: self.color.clone(),
         }
     }
 }
@@ -318,6 +334,27 @@ impl Chart {
     pub fn is_empty(&self) -> bool {
         self.series.is_empty()
     }
+}
+
+/// Geographic center of (longitude, latitude) points, degrees: mean of the unit vectors
+/// (valid across the antimeridian and around the poles)
+#[cfg_attr(not(any(feature = "pdf", feature = "ionex")), allow(dead_code))]
+pub fn geographic_center(points: impl Iterator<Item = (f64, f64)>) -> Option<(f64, f64)> {
+    let (mut x, mut y, mut z, mut n) = (0.0, 0.0, 0.0, 0usize);
+    for (lon, lat) in points.filter(|(lon, lat)| lon.is_finite() && lat.is_finite()) {
+        let (l, p) = (lon.to_radians(), lat.to_radians());
+        x += p.cos() * l.cos();
+        y += p.cos() * l.sin();
+        z += p.sin();
+        n += 1;
+    }
+    if n == 0 || (x * x + y * y + z * z).sqrt() < 1.0E-9 {
+        return None;
+    }
+    Some((
+        y.atan2(x).to_degrees(),
+        z.atan2((x * x + y * y).sqrt()).to_degrees(),
+    ))
 }
 
 /// Seconds elapsed since origin
@@ -431,5 +468,24 @@ impl Consumer for ReportSink {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn geographic_centers() {
+        // across the antimeridian
+        let (lon, lat) = geographic_center([(179.0, 0.0), (-179.0, 0.0)].into_iter()).unwrap();
+        assert!((lon.abs() - 180.0).abs() < 1e-9 && lat.abs() < 1e-9);
+        // around the pole
+        let (_, lat) = geographic_center(
+            [(0.0, 80.0), (90.0, 80.0), (180.0, 80.0), (-90.0, 80.0)].into_iter(),
+        )
+        .unwrap();
+        assert!((lat - 90.0).abs() < 1e-9);
+        assert!(geographic_center(std::iter::empty()).is_none());
     }
 }

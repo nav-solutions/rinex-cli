@@ -46,12 +46,45 @@ pub struct SessionContext {
     /// Navigation context
     #[cfg(feature = "navigation")]
     pub navigation: Option<crate::nav::NavigationSetup>,
+
+    /// Quality control of the observations deployed (signal sources, sky view)
+    pub qc: bool,
 }
 
 /// Engine and consumers, ready to run
 pub struct Plan {
     pub engine: QcEngine<QcOutput>,
     pub consumers: Vec<Box<dyn Consumer>>,
+}
+
+/// Quality control of the observations: signal sources, and with navigation RINEX,
+/// ephemeris coverage and broadcast ephemerides (sky view).
+/// Returns false when there is no observation to analyze.
+fn with_qc(
+    builder: QcEngineBuilder<QcOutput>,
+    inputs: &Inputs,
+    coverage: bool,
+    setup: &mut Vec<(String, String)>,
+) -> (QcEngineBuilder<QcOutput>, bool) {
+    if inputs.entries(ProductKind::Observation).next().is_none() {
+        return (builder, false);
+    }
+
+    let mut builder = builder.with_processor(QcSignalProcessor);
+
+    if coverage {
+        if inputs.entries(ProductKind::Navigation).next().is_some() {
+            builder = builder
+                .with_processor(QcEphemerisCoverageProcessor::default())
+                // broadcast ephemerides, for the sky plots
+                .with_processor(QcEphemerisProcessor::default());
+            setup.push(("Ephemeris coverage".to_string(), "yes".to_string()));
+        } else {
+            warn!("no navigation RINEX: ephemeris coverage and sky view are not analyzed");
+        }
+    }
+
+    (builder, true)
 }
 
 fn builder(cli: &Cli, inputs: &mut Inputs) -> QcEngineBuilder<QcOutput> {
@@ -157,6 +190,10 @@ pub fn plan(cli: &Cli, mut inputs: Inputs, workspace: &Workspace) -> Result<Plan
     #[cfg(feature = "navigation")]
     let mut navigation = None;
 
+    // quality control of the observations, in the reports of the processing commands
+    let qc = !cli.outputs.no_qc;
+    let mut qc_deployed = false;
+
     let (command, engine) = match &cli.command {
         Command::Index(_)
         | Command::Filegen(_)
@@ -167,25 +204,11 @@ pub fn plan(cli: &Cli, mut inputs: Inputs, workspace: &Workspace) -> Result<Plan
         | Command::Diff(_) => unreachable!("this command does not deploy the engine"),
 
         Command::Qc(args) => {
-            let mut builder = builder(cli, &mut inputs);
+            let builder = builder(cli, &mut inputs);
+            let (builder, _) = with_qc(builder, &inputs, !args.no_coverage, &mut setup);
+            qc_deployed = true;
 
-            let has_nav = inputs.entries(ProductKind::Navigation).next().is_some();
-
-            if !args.no_coverage {
-                if has_nav {
-                    builder = builder.with_processor(QcEphemerisCoverageProcessor::default());
-                    setup.push(("Ephemeris coverage".to_string(), "yes".to_string()));
-                    // broadcast ephemerides, for the sky plots
-                    builder = builder.with_processor(QcEphemerisProcessor::default());
-                } else {
-                    warn!("no navigation RINEX: ephemeris coverage is not analyzed");
-                }
-            }
-
-            let engine = builder
-                .with_processor(QcSignalProcessor)
-                .build()
-                .map_err(engine_error)?;
+            let engine = builder.build().map_err(engine_error)?;
 
             ("qc", engine)
         },
@@ -211,10 +234,11 @@ pub fn plan(cli: &Cli, mut inputs: Inputs, workspace: &Workspace) -> Result<Plan
             let processor = QcNavigationProcessor::new(almanac, cfg)
                 .map_err(|e| Error::Navigation(e.to_string()))?;
 
-            let engine = builder(cli, &mut inputs)
-                .with_processor(processor)
-                .build()
-                .map_err(engine_error)?;
+            let mut builder = builder(cli, &mut inputs).with_processor(processor);
+            if qc {
+                (builder, qc_deployed) = with_qc(builder, &inputs, true, &mut setup);
+            }
+            let engine = builder.build().map_err(engine_error)?;
 
             if args.gpx {
                 consumers.push(Box::new(TrackSink::new(workspace, TrackFormat::Gpx)));
@@ -261,10 +285,11 @@ pub fn plan(cli: &Cli, mut inputs: Inputs, workspace: &Workspace) -> Result<Plan
             let processor = QcCggttsProcessor::new(almanac, cfg, cggtts_cfg)
                 .map_err(|e| Error::Navigation(e.to_string()))?;
 
-            let engine = builder(cli, &mut inputs)
-                .with_processor(processor)
-                .build()
-                .map_err(engine_error)?;
+            let mut builder = builder(cli, &mut inputs).with_processor(processor);
+            if qc {
+                (builder, qc_deployed) = with_qc(builder, &inputs, true, &mut setup);
+            }
+            let engine = builder.build().map_err(engine_error)?;
 
             // station: user, marker name, receiver identity
             let station = args.station.clone().unwrap_or_else(|| {
@@ -345,10 +370,12 @@ pub fn plan(cli: &Cli, mut inputs: Inputs, workspace: &Workspace) -> Result<Plan
                         .unwrap_or("other signal source".to_string()),
                 ));
 
-                let engine = builder(cli, &mut inputs)
-                    .with_processor(QcObservationResidualProcessor::new(cfg))
-                    .build()
-                    .map_err(engine_error)?;
+                let mut builder = builder(cli, &mut inputs)
+                    .with_processor(QcObservationResidualProcessor::new(cfg));
+                if qc {
+                    (builder, qc_deployed) = with_qc(builder, &inputs, true, &mut setup);
+                }
+                let engine = builder.build().map_err(engine_error)?;
 
                 ("residuals obs", engine)
             },
@@ -571,10 +598,11 @@ pub fn plan(cli: &Cli, mut inputs: Inputs, workspace: &Workspace) -> Result<Plan
                 format!("{} km", cfg.shell_altitude_km),
             ));
 
-            let engine = builder(cli, &mut inputs)
-                .with_processor(QcIppProcessor::new(cfg))
-                .build()
-                .map_err(engine_error)?;
+            let mut builder = builder(cli, &mut inputs).with_processor(QcIppProcessor::new(cfg));
+            if qc {
+                (builder, qc_deployed) = with_qc(builder, &inputs, true, &mut setup);
+            }
+            let engine = builder.build().map_err(engine_error)?;
 
             ("ipp", engine)
         },
@@ -604,6 +632,7 @@ pub fn plan(cli: &Cli, mut inputs: Inputs, workspace: &Workspace) -> Result<Plan
         manifest: inputs.manifest.clone(),
         #[cfg(feature = "navigation")]
         navigation,
+        qc: qc_deployed,
     };
 
     consumers.push(Box::new(SummarySink::new(workspace, &context)));

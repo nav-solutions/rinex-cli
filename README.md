@@ -21,17 +21,19 @@ and presents the results as data files and reports.
 ```
 
 - Quality control: sampling, data gaps, signal strength, lock losses, ephemeris coverage,
-  sky plot and satellite visibility timeline
+  sky plot and satellite visibility timeline. The reports of the processing commands
+  (`nav`, `cggtts`, `ipp`, `residuals obs`) end with the same quality control of their observations
 - Post processed navigation: SPP, CPP, PPP (`navigation` feature)
 - RTK (differential) navigation: RTK-SPP, RTK-CPP, RTK-PPP, with the baseline in the report
 - Navigation reports: trajectory map (OpenStreetMap in HTML, local plan in PDF), world map,
   sky plot and visibility timeline of the satellites used
-- CGGTTS solutions: common view time transfer (`cggtts` feature)
+- CGGTTS solutions: common view time transfer (`cggtts` feature), tracks in the sky
 - Residual analysis: receiver A − receiver B, orbital product A − product B,
   clock product A − product B (two analysis centers)
 - Meteo sensors analysis (Meteo RINEX)
 - TEC maps analysis, temporal interpolation and IONEX synthesis (`ionex` feature)
-- Ionospheric Pierce Points (`ionex` feature)
+- Ionospheric Pierce Points (`ionex` feature): regional and world maps of the pierce points,
+  vertical TEC at the pierce points (IONEX), lines of sight
 - File operations: filegen, merge, split, tbin, cbin, diff
 
 ## Install
@@ -136,12 +138,19 @@ Preprocessing (`-G -R -E -C -J -I -S --CG`, `-P FILTER`, `-z`) applies to each f
 | `--data csv,jsonl,none` | Data formats (default `csv`) |
 | `--raw` | Also export the raw signal observations and TEC map nodes |
 | `--stdout` | Stream the results on stdout (JSON lines), logs go to stderr |
+| `--no-qc` | Processing commands: no quality control of the observations in the report |
 | `--title`, `--open`, `-q` | Report title, open the report, quiet |
 
 The HTML report is a single interactive page (plotly.js is loaded from its CDN). The PDF report
 is static: it is meant to be archived, printed or delivered. Both are built from the same report
-model. The HTML maps load their tiles from OpenStreetMap and need a network access;
-the PDF maps are self contained. The JSON lines deserialize into `gnss_qc::prelude::QcOutputItem` (serde feature).
+model. The HTML maps load their tiles from OpenStreetMap, and the coast lines of the
+world and regional maps from the plotly CDN: they need a network access. The PDF maps are self
+contained (Natural Earth land masses).
+
+The report of a processing command presents its results first (navigation solutions, CGGTTS
+tracks, pierce points..), then the quality control of the observations it processed, as the `qc`
+command would: a `nav` report is a `qc` report completed by the solutions. `--no-qc` skips that
+part (faster on long sessions). The JSON lines deserialize into `gnss_qc::prelude::QcOutputItem` (serde feature).
 
 ## Commands
 
@@ -156,7 +165,7 @@ the PDF maps are self contained. The JSON lines deserialize into `gnss_qc::prelu
 | `residuals clock` | Clock product A − product B: `--lhs`, `--rhs` (`clk`, `clk:PRODUCT`, `sp3`, `sp3:PRODUCT`, `nav`, `nav:PRODUCT`), `--sampling`, `--alignment`, `--satellites-only`, `--stations-only`, `-c`. See [clock residuals](documentation/ClockResiduals.md) |
 | `meteo` | Meteo sensors: statistics and time series (`--observables`). See [meteo](documentation/Meteo.md) |
 | `tec` | TEC maps (IONEX): statistics per region (`--region`), temporal interpolation (`--upsample`, `--resample`, `--interpolation`), IONEX synthesis (`--no-ionex`, `--gzip`). See [TEC maps](documentation/TEC.md) |
-| `ipp` | Ionospheric Pierce Points: `--elevation-mask`, `--shell-altitude`, `--orbits`, `-c` |
+| `ipp` | Ionospheric Pierce Points: `--elevation-mask`, `--shell-altitude`, `--orbits`, `-c`. See [pierce points](documentation/IPP.md) |
 | `filegen` | Writes the (preprocessed) products as RINEX / SP3 |
 | `merge FILE` | Merges a file into the product of the same kind |
 | `split EPOCH` | Splits the products at this epoch |
