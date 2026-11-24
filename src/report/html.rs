@@ -2,7 +2,7 @@
 use maud::{html, Markup, PreEscaped, DOCTYPE};
 use serde_json::{json, Value};
 
-use crate::report::{time_tag, Block, Chart, ChartKind, Report, XAxis};
+use crate::report::{time_tag, Block, Chart, ChartKind, Heatmap, HeatmapFrame, Report, XAxis};
 
 /// Maximal number of points per series
 const MAX_POINTS: usize = 2000;
@@ -32,6 +32,7 @@ table.kv th { width:220px; position:static; }
 .notice { background:var(--warnbg); color:var(--warn); padding:8px 12px; border-radius:6px; margin:8px 0; }
 .chart { width:100%; height:440px; margin:8px 0; }
 .chart.map { height:520px; }
+.chart.heatmap { height:620px; }
 footer { color:var(--muted); padding:16px 32px; }
 @media print { nav { display:none; } .table-wrap { max-height:none; overflow:visible; } }
 "#;
@@ -160,6 +161,74 @@ fn chart_json(chart: &Chart) -> Value {
     json!({ "data": traces, "layout": layout })
 }
 
+/// Heatmap: one trace, frames selected with a slider (same color scale)
+fn heatmap_json(heatmap: &Heatmap) -> Value {
+    let z = |frame: &HeatmapFrame| -> Value {
+        frame
+            .z
+            .iter()
+            .map(|row| {
+                row.iter()
+                    .map(|v| if v.is_finite() { json!(v) } else { Value::Null })
+                    .collect::<Value>()
+            })
+            .collect()
+    };
+
+    let (zmin, zmax) = heatmap
+        .frames
+        .iter()
+        .flat_map(|f| f.z.iter().flatten())
+        .copied()
+        .filter(|v| v.is_finite())
+        .fold((f64::MAX, f64::MIN), |(a, b), v| (a.min(v), b.max(v)));
+
+    let first = heatmap.frames.first();
+
+    let trace = json!({
+        "type": "heatmap",
+        "x": heatmap.x,
+        "y": heatmap.y,
+        "z": first.map(z).unwrap_or(Value::Null),
+        "zmin": zmin,
+        "zmax": zmax,
+        "colorscale": "Viridis",
+        "colorbar": {"title": {"text": heatmap.z_label}},
+        "hovertemplate": "%{x}°, %{y}°: %{z:.1f}<extra></extra>",
+    });
+
+    let steps = heatmap
+        .frames
+        .iter()
+        .map(|frame| {
+            json!({
+                "label": frame.label,
+                "method": "restyle",
+                "args": [{"z": [z(frame)]}],
+            })
+        })
+        .collect::<Vec<_>>();
+
+    let mut layout = json!({
+        "title": {"text": heatmap.title, "font": {"size": 15}},
+        "margin": {"l": 60, "r": 20, "t": 48, "b": 48},
+        "xaxis": {"title": {"text": heatmap.x_label}},
+        "yaxis": {"title": {"text": heatmap.y_label}, "scaleanchor": "x", "scaleratio": 1},
+    });
+
+    if heatmap.frames.len() > 1 {
+        layout["sliders"] = json!([{
+            "active": 0,
+            "currentvalue": {"prefix": "Map: "},
+            "pad": {"t": 48},
+            "steps": steps,
+        }]);
+        layout["margin"]["b"] = json!(110);
+    }
+
+    json!({ "data": [trace], "layout": layout })
+}
+
 fn table(headers: &[String], rows: &[Vec<String>]) -> Markup {
     html! {
         div class="table-wrap" {
@@ -204,6 +273,16 @@ pub fn render(report: &Report) -> String {
                                 };
                                 @let _ = charts.insert(id.clone(), chart_json(chart));
                                 div id=(id) class={ "chart" @if chart.kind == ChartKind::Map { " map" } } {}
+                            }
+                        },
+                        Block::Heatmap(heatmap) => {
+                            @if !heatmap.frames.is_empty() {
+                                @let id = {
+                                    chart_index += 1;
+                                    format!("chart-{}", chart_index)
+                                };
+                                @let _ = charts.insert(id.clone(), heatmap_json(heatmap));
+                                div id=(id) class="chart heatmap" {}
                             }
                         },
                     }

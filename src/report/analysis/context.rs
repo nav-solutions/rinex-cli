@@ -28,14 +28,8 @@ pub fn sections(context: &SessionContext, run: &RunSummary) -> Section {
     ]);
 
     for entry in context.manifest.iter() {
-        let processed = if entry.kind.is_processed() {
-            ""
-        } else {
-            " (not processed)"
-        };
-
         table.push(vec![
-            format!("{}{}", entry.kind, processed),
+            entry.kind.to_string(),
             entry.identity.to_string(),
             format!(
                 "{} → {}",
@@ -89,7 +83,10 @@ pub fn sections(context: &SessionContext, run: &RunSummary) -> Section {
         ("Command line".to_string(), context.command_line.clone()),
         (
             "Software".to_string(),
-            format!("rinex-cli v{}, gnss-qc v0.6", env!("CARGO_PKG_VERSION")),
+            format!(
+                "rinex-cli v{}, gnss-qc v0.7 (develop)",
+                env!("CARGO_PKG_VERSION")
+            ),
         ),
     ]));
 

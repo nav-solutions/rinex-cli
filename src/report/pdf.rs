@@ -141,6 +141,37 @@ pub fn render(report: &Report) -> Result<Vec<u8>, Error> {
                     }
                     let _ = writeln!(doc, ")]");
                 },
+                Block::Heatmap(heatmap) => {
+                    // a selection of frames (at most 6, evenly spaced)
+                    let n = heatmap.frames.len();
+                    let step = n.div_ceil(6).max(1);
+
+                    for frame in heatmap.frames.iter().step_by(step) {
+                        let name = format!("figure-{}.svg", figures.len());
+                        figures.push((
+                            name.clone(),
+                            svg::render_heatmap(heatmap, frame).into_bytes(),
+                        ));
+
+                        let _ = writeln!(
+                            doc,
+                            "#figure(image({}, width: 100%), caption: {})",
+                            s(&name),
+                            s(&format!("{}: {}", heatmap.title, frame.label))
+                        );
+                    }
+
+                    if n > step {
+                        let _ = writeln!(
+                            doc,
+                            "#par(text(size: 8.5pt, fill: luma(90), {}))",
+                            s(&format!(
+                                "{} maps in total, one map out of {} is shown (the HTML report shows every map).",
+                                n, step
+                            ))
+                        );
+                    }
+                },
                 Block::Chart(chart) => {
                     if chart.is_empty() {
                         continue;

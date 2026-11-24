@@ -1,7 +1,7 @@
 //! Static charts (SVG), for the PDF rendition
 use std::fmt::Write;
 
-use crate::report::{time_tag, Chart, ChartKind, XAxis};
+use crate::report::{time_tag, Chart, ChartKind, Heatmap, HeatmapFrame, XAxis};
 
 const WIDTH: f64 = 720.0;
 const HEIGHT: f64 = 340.0;
@@ -359,6 +359,204 @@ pub fn render(chart: &Chart) -> String {
             escape(&s.name)
         );
     }
+
+    svg.push_str("</svg>");
+    svg
+}
+
+/// Viridis color scale (5 stops, linear interpolation)
+fn viridis(t: f64) -> String {
+    const STOPS: [(f64, (f64, f64, f64)); 5] = [
+        (0.00, (68.0, 1.0, 84.0)),
+        (0.25, (59.0, 82.0, 139.0)),
+        (0.50, (33.0, 145.0, 140.0)),
+        (0.75, (94.0, 201.0, 98.0)),
+        (1.00, (253.0, 231.0, 37.0)),
+    ];
+
+    let t = if t.is_finite() {
+        t.clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+
+    let i = STOPS
+        .windows(2)
+        .position(|w| t <= w[1].0)
+        .unwrap_or(STOPS.len() - 2);
+
+    let ((t0, c0), (t1, c1)) = (STOPS[i], STOPS[i + 1]);
+    let w = (t - t0) / (t1 - t0);
+    let mix = |a: f64, b: f64| (a + (b - a) * w).round() as u8;
+
+    format!(
+        "#{:02x}{:02x}{:02x}",
+        mix(c0.0, c1.0),
+        mix(c0.1, c1.1),
+        mix(c0.2, c1.2)
+    )
+}
+
+/// Renders one frame of a heatmap as SVG (color scale shared by all frames)
+pub fn render_heatmap(heatmap: &Heatmap, frame: &HeatmapFrame) -> String {
+    const COLORBAR: f64 = 70.0;
+
+    let (zmin, zmax) = heatmap.range();
+    let span = (zmax - zmin).max(1.0E-9);
+
+    let (nx, ny) = (heatmap.x.len(), heatmap.y.len());
+
+    if nx == 0 || ny == 0 {
+        return format!(
+            r#"<svg xmlns="http://www.w3.org/2000/svg" width="{}" height="40"></svg>"#,
+            WIDTH
+        );
+    }
+
+    // cell size: grid spacing (nodes at the cell centers)
+    let dx = if nx > 1 {
+        (heatmap.x[nx - 1] - heatmap.x[0]) / (nx - 1) as f64
+    } else {
+        1.0
+    };
+    let dy = if ny > 1 {
+        (heatmap.y[ny - 1] - heatmap.y[0]) / (ny - 1) as f64
+    } else {
+        1.0
+    };
+
+    let (x_min, x_max) = (heatmap.x[0] - dx / 2.0, heatmap.x[nx - 1] + dx / 2.0);
+    let (y_min, y_max) = (heatmap.y[0] - dy / 2.0, heatmap.y[ny - 1] + dy / 2.0);
+
+    // equal axes
+    let plot_w_max = WIDTH - MARGIN_LEFT - MARGIN_RIGHT - COLORBAR;
+    let plot_h_max = 2.0 * HEIGHT - MARGIN_TOP - MARGIN_BOTTOM;
+    let scale = (plot_w_max / (x_max - x_min)).min(plot_h_max / (y_max - y_min));
+    let (plot_w, plot_h) = ((x_max - x_min) * scale, (y_max - y_min) * scale);
+    let height = plot_h + MARGIN_TOP + MARGIN_BOTTOM;
+
+    let px = |x: f64| MARGIN_LEFT + (x - x_min) * scale;
+    let py = |y: f64| MARGIN_TOP + plot_h - (y - y_min) * scale;
+
+    let mut svg = String::with_capacity(512 * 1024);
+    let _ = write!(
+        svg,
+        r#"<svg xmlns="http://www.w3.org/2000/svg" width="{w}" height="{h}" viewBox="0 0 {w} {h}" font-family="{f}" font-size="10">"#,
+        w = WIDTH,
+        h = height,
+        f = FONT
+    );
+
+    // cells
+    for (j, row) in frame.z.iter().enumerate().take(ny) {
+        for (i, value) in row.iter().enumerate().take(nx) {
+            if !value.is_finite() {
+                continue;
+            }
+            let (x, y) = (heatmap.x[i], heatmap.y[j]);
+            let _ = write!(
+                svg,
+                r#"<rect x="{:.2}" y="{:.2}" width="{:.2}" height="{:.2}" fill="{}"/>"#,
+                px(x - dx / 2.0),
+                py(y + dy / 2.0),
+                dx * scale + 0.3,
+                dy * scale + 0.3,
+                viridis((value - zmin) / span)
+            );
+        }
+    }
+
+    // frame and graticule (every 30°)
+    let _ = write!(
+        svg,
+        r##"<rect x="{}" y="{}" width="{}" height="{}" fill="none" stroke="#3d4b59" stroke-width="0.8"/>"##,
+        MARGIN_LEFT, MARGIN_TOP, plot_w, plot_h
+    );
+
+    for v in ticks(x_min, x_max, 8) {
+        let x = px(v);
+        let _ = write!(
+            svg,
+            r##"<line x1="{x}" y1="{y0}" x2="{x}" y2="{y1}" stroke="#ffffff" stroke-opacity="0.35" stroke-width="0.5"/><text x="{x}" y="{ty}" text-anchor="middle" fill="#3d4b59">{label}</text>"##,
+            x = x,
+            y0 = MARGIN_TOP,
+            y1 = MARGIN_TOP + plot_h,
+            ty = MARGIN_TOP + plot_h + 14.0,
+            label = format_tick(v, 1.0)
+        );
+    }
+
+    for v in ticks(y_min, y_max, 6) {
+        let y = py(v);
+        let _ = write!(
+            svg,
+            r##"<line x1="{x0}" y1="{y}" x2="{x1}" y2="{y}" stroke="#ffffff" stroke-opacity="0.35" stroke-width="0.5"/><text x="{tx}" y="{ty}" text-anchor="end" fill="#3d4b59">{label}</text>"##,
+            x0 = MARGIN_LEFT,
+            x1 = MARGIN_LEFT + plot_w,
+            y = y,
+            tx = MARGIN_LEFT - 5.0,
+            ty = y + 3.5,
+            label = format_tick(v, 1.0)
+        );
+    }
+
+    // axis labels
+    let _ = write!(
+        svg,
+        r##"<text x="{}" y="{}" text-anchor="middle" fill="#1d2733">{}</text>"##,
+        MARGIN_LEFT + plot_w / 2.0,
+        height - 8.0,
+        escape(&heatmap.x_label)
+    );
+    let _ = write!(
+        svg,
+        r##"<text x="14" y="{y}" text-anchor="middle" fill="#1d2733" transform="rotate(-90 14 {y})">{}</text>"##,
+        escape(&heatmap.y_label),
+        y = MARGIN_TOP + plot_h / 2.0
+    );
+
+    // color bar
+    let (bx, bw) = (MARGIN_LEFT + plot_w + 18.0, 12.0);
+    let steps = 64;
+    for k in 0..steps {
+        let t = k as f64 / (steps - 1) as f64;
+        let y = MARGIN_TOP + plot_h * (1.0 - (k + 1) as f64 / steps as f64);
+        let _ = write!(
+            svg,
+            r#"<rect x="{:.1}" y="{:.2}" width="{}" height="{:.2}" fill="{}"/>"#,
+            bx,
+            y,
+            bw,
+            plot_h / steps as f64 + 0.3,
+            viridis(t)
+        );
+    }
+
+    let bar_ticks = ticks(zmin, zmax, 5);
+    let bar_step = if bar_ticks.len() > 1 {
+        bar_ticks[1] - bar_ticks[0]
+    } else {
+        1.0
+    };
+
+    for v in bar_ticks {
+        let y = MARGIN_TOP + plot_h * (1.0 - (v - zmin) / span);
+        let _ = write!(
+            svg,
+            r##"<text x="{}" y="{:.1}" fill="#3d4b59">{}</text>"##,
+            bx + bw + 3.0,
+            y + 3.5,
+            format_tick(v, bar_step)
+        );
+    }
+
+    let _ = write!(
+        svg,
+        r##"<text x="{}" y="{}" fill="#1d2733">{}</text>"##,
+        bx - 4.0,
+        MARGIN_TOP - 4.0,
+        escape(&heatmap.z_label)
+    );
 
     svg.push_str("</svg>");
     svg

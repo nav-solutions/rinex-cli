@@ -1,5 +1,6 @@
 //! Accumulators: analyze the output stream, build the report sections.
 pub mod context;
+mod meteo;
 mod residuals;
 mod signals;
 
@@ -11,6 +12,9 @@ mod cggtts;
 
 #[cfg(feature = "ionex")]
 mod ipp;
+
+#[cfg(feature = "ionex")]
+mod tec;
 
 use gnss_qc::prelude::QcOutputItem;
 
@@ -33,6 +37,10 @@ pub fn for_command(context: &SessionContext) -> Vec<Box<dyn Analysis>> {
         "qc" => analyses.push(Box::new(signals::SignalAnalysis::default())),
         "residuals obs" => analyses.push(Box::new(residuals::ObservationResiduals::default())),
         "residuals orbit" => analyses.push(Box::new(residuals::OrbitResiduals::default())),
+        "residuals clock" => analyses.push(Box::new(residuals::ClockResiduals::default())),
+        "meteo" => analyses.push(Box::new(meteo::MeteoAnalysis::default())),
+        #[cfg(feature = "ionex")]
+        "tec" => analyses.push(Box::new(tec::TecAnalysis::default())),
         #[cfg(feature = "navigation")]
         "nav" => analyses.push(Box::new(navigation::NavigationAnalysis::new(context))),
         #[cfg(feature = "cggtts")]

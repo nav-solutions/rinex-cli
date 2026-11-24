@@ -156,6 +156,7 @@ fn subdir(kind: ProductKind) -> &'static str {
         ProductKind::Clock => "CLK",
         ProductKind::Antex => "ANTEX",
         ProductKind::SP3 => "SP3",
+        ProductKind::Ionex => "IONEX",
     }
 }
 

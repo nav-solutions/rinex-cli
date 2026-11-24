@@ -42,7 +42,8 @@ pub struct Cli {
 #[derive(Debug, Args)]
 #[command(next_help_heading = "Inputs")]
 pub struct InputArgs {
-    /// Load one file: RINEX, CRINEX, SP3, gzip compressed or not. Repeat as needed.
+    /// Load one file: RINEX (observation, navigation, meteo, clock), CRINEX, SP3,
+    /// IONEX (ionex feature), gzip compressed or not. Repeat as needed.
     /// Prefix with ALIAS= to index this file (and merge it) under a custom alias,
     /// for example: -f base=MOJN00DNK_R_20201770000_01D_30S_MO.crx.gz
     #[arg(short = 'f', long = "file", value_name = "[ALIAS=]FILE", global = true)]
@@ -77,6 +78,10 @@ pub struct InputArgs {
     /// Indexing method of clock RINEX: agency (default), filename, auto, alias:NAME
     #[arg(long, value_name = "METHOD", global = true)]
     pub clk_index: Option<IndexingMethod>,
+
+    /// Indexing method of IONEX files: agency (default), filename, auto, alias:NAME
+    #[arg(long, value_name = "METHOD", global = true)]
+    pub ionex_index: Option<IndexingMethod>,
 
     /// Input preferences (QcInputConfig) as JSON file.
     /// The --*-index options take precedence.
@@ -199,7 +204,7 @@ pub struct OutputArgs {
     )]
     pub data: Vec<DataFormat>,
 
-    /// Also export the raw signal observations (large)
+    /// Also export the raw signal observations and TEC map nodes (large)
     #[arg(long, global = true)]
     pub raw: bool,
 
@@ -297,8 +302,17 @@ pub enum Command {
     /// CGGTTS solutions (common view time transfer). Requires the cggtts feature.
     Cggtts(CggttsArgs),
 
-    /// Residual analysis: A − B between two receivers or two orbital products.
+    /// Residual analysis: A − B between two receivers, two orbital products
+    /// or two clock products.
     Residuals(ResidualsArgs),
+
+    /// Meteo sensors analysis: statistics and time series of every sensor
+    /// (Meteo RINEX).
+    Meteo(MeteoArgs),
+
+    /// TEC maps analysis (IONEX): statistics per region, map after map; temporal
+    /// interpolation and synthesis of new IONEX files. Requires the ionex feature.
+    Tec(TecArgs),
 
     /// Ionospheric Pierce Points of every line of sight. Requires the ionex feature.
     Ipp(IppArgs),
@@ -613,6 +627,101 @@ pub enum ResidualsKind {
 
     /// Orbit residuals: product A − product B (radial, along track, cross track, clock)
     Orbit(OrbitResidualsArgs),
+
+    /// Clock residuals: clock product A − clock product B (Clock RINEX, SP3, NAV),
+    /// for example two analysis centers
+    Clock(ClockResidualsArgs),
+}
+
+/// Clock datum alignment
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum AlignmentArg {
+    /// Raw residuals only
+    None,
+    /// One datum per epoch
+    Epoch,
+    /// One datum per epoch and per constellation
+    Constellation,
+}
+
+#[derive(Debug, Args)]
+pub struct ClockResidualsArgs {
+    /// Product A: clk, clk:PRODUCT, sp3, sp3:PRODUCT, nav, nav:PRODUCT
+    #[arg(long, default_value = "clk")]
+    pub lhs: String,
+
+    /// Product B: clk, clk:PRODUCT, sp3, sp3:PRODUCT, nav, nav:PRODUCT
+    #[arg(long, default_value = "sp3")]
+    pub rhs: String,
+
+    /// Minimal interval between two evaluations (s)
+    #[arg(long)]
+    pub sampling: Option<f64>,
+
+    /// Clock datum of each product: estimated per epoch and constellation (default),
+    /// per epoch, or not estimated
+    #[arg(long, value_enum, default_value = "constellation")]
+    pub alignment: AlignmentArg,
+
+    /// Satellite clocks only
+    #[arg(long, conflicts_with = "stations_only")]
+    pub satellites_only: bool,
+
+    /// Ground station clocks only
+    #[arg(long)]
+    pub stations_only: bool,
+
+    /// Constellations, comma separated. Default: all.
+    #[arg(short, long, value_delimiter = ',')]
+    pub constellations: Vec<String>,
+}
+
+#[derive(Debug, Args)]
+pub struct MeteoArgs {
+    /// Observables to analyze, comma separated (PR, TD, HR, ZW, ZD, ZT, WD, WS, RI, HI).
+    /// Default: all of them.
+    #[arg(long, value_delimiter = ',')]
+    pub observables: Vec<String>,
+}
+
+/// TEC maps temporal interpolation
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum InterpolationArg {
+    /// Nearest map in time
+    Nearest,
+    /// Linear interpolation of the surrounding maps
+    Linear,
+    /// Linear interpolation of the surrounding maps rotated with the Sun (IONEX specifications)
+    Rotated,
+}
+
+#[derive(Debug, Args)]
+pub struct TecArgs {
+    /// Increases the number of maps by this factor (2: twice as many maps),
+    /// intermediate maps being interpolated in time
+    #[arg(long, value_name = "FACTOR", conflicts_with = "resample")]
+    pub upsample: Option<f64>,
+
+    /// One map every period (for example "15 min"), maps being interpolated in time
+    #[arg(long, value_name = "PERIOD")]
+    pub resample: Option<gnss_qc::prelude::Duration>,
+
+    /// Temporal interpolation strategy
+    #[arg(long, value_enum, default_value = "rotated")]
+    pub interpolation: InterpolationArg,
+
+    /// Additional region of the statistics: "NAME:LAT_MIN,LAT_MAX,LON_MIN,LON_MAX"
+    /// (degrees), for example "Europe:35,70,-10,30". Repeat as needed.
+    #[arg(long, value_name = "NAME:LAT0,LAT1,LON0,LON1")]
+    pub region: Vec<String>,
+
+    /// Do not synthesize the IONEX file of the (resampled) maps
+    #[arg(long)]
+    pub no_ionex: bool,
+
+    /// Gzip compressed IONEX output
+    #[arg(long)]
+    pub gzip: bool,
 }
 
 #[derive(Debug, Args)]
@@ -691,6 +800,32 @@ pub fn parse_coordinates(text: &str) -> Result<(f64, f64, f64), Error> {
     }
 }
 
+/// Parses a TEC region: "NAME:LAT_MIN,LAT_MAX,LON_MIN,LON_MAX"
+#[cfg_attr(not(feature = "ionex"), allow(dead_code))]
+pub fn parse_region(text: &str) -> Result<gnss_qc::prelude::QcTecRegion, Error> {
+    let invalid = || {
+        Error::Config(format!(
+            "invalid region \"{}\": NAME:LAT_MIN,LAT_MAX,LON_MIN,LON_MAX",
+            text
+        ))
+    };
+
+    let (name, bounds) = text.split_once(':').ok_or_else(invalid)?;
+
+    let values = bounds
+        .split(',')
+        .map(|v| f64::from_str(v.trim()))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|_| invalid())?;
+
+    match values.as_slice() {
+        [lat0, lat1, lon0, lon1] if !name.trim().is_empty() => Ok(
+            gnss_qc::prelude::QcTecRegion::new(name.trim(), (*lat0, *lat1), (*lon0, *lon1)),
+        ),
+        _ => Err(invalid()),
+    }
+}
+
 /// Parses a list of constellations
 pub fn parse_constellations(
     list: &[String],
@@ -738,6 +873,13 @@ mod test {
             2
         );
         assert!(IndexingMethod::from_str("unknown").is_err());
+
+        let europe = parse_region("Europe:35,70,-10,30").unwrap();
+        assert_eq!(europe.name, "Europe");
+        assert_eq!(europe.latitude_deg, (35.0, 70.0));
+        assert_eq!(europe.longitude_deg, (-10.0, 30.0));
+        assert!(parse_region("Europe:35,70").is_err());
+        assert!(parse_region(":35,70,0,1").is_err());
     }
 
     #[test]

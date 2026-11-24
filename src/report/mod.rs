@@ -78,6 +78,51 @@ pub enum Block {
     Table(Table),
     /// Chart
     Chart(Chart),
+    /// Color map over a regular grid (one frame per epoch)
+    #[cfg_attr(not(feature = "ionex"), allow(dead_code))]
+    Heatmap(Heatmap),
+}
+
+/// One frame of a [Heatmap]
+#[derive(Debug, Clone)]
+pub struct HeatmapFrame {
+    /// Frame label (epoch)
+    pub label: String,
+    /// Values: one row per y value, one column per x value (NaN: no value)
+    pub z: Vec<Vec<f64>>,
+}
+
+/// Color map over a regular grid, with possibly several frames sharing the same scale
+#[derive(Debug, Clone)]
+pub struct Heatmap {
+    pub title: String,
+    pub x_label: String,
+    pub y_label: String,
+    pub z_label: String,
+    /// Grid x values (increasing)
+    pub x: Vec<f64>,
+    /// Grid y values (increasing)
+    pub y: Vec<f64>,
+    pub frames: Vec<HeatmapFrame>,
+}
+
+impl Heatmap {
+    /// Range of the values, over all frames
+    #[cfg_attr(not(feature = "pdf"), allow(dead_code))]
+    pub fn range(&self) -> (f64, f64) {
+        let values = self
+            .frames
+            .iter()
+            .flat_map(|f| f.z.iter().flatten())
+            .copied()
+            .filter(|v| v.is_finite());
+        let (min, max) = values.fold((f64::MAX, f64::MIN), |(a, b), v| (a.min(v), b.max(v)));
+        if min > max {
+            (0.0, 1.0)
+        } else {
+            (min, max)
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default)]

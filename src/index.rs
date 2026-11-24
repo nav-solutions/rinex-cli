@@ -70,10 +70,6 @@ pub fn run(inputs: &Inputs, args: &IndexArgs) -> Result<(), Error> {
             writeln!(out, "    · {}", file.display())?;
         }
 
-        if !entry.kind.is_processed() {
-            writeln!(out, "    (not processed by GNSS-Qc yet)")?;
-        }
-
         writeln!(out)?;
     }
 

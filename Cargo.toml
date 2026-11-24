@@ -31,8 +31,8 @@ ppp = ["navigation"]
 # CGGTTS solutions (cggtts command)
 cggtts = ["navigation", "gnss-qc/cggtts", "dep:cggtts"]
 
-# Ionospheric Pierce Points (ipp command)
-ionex = ["gnss-qc/ionex"]
+# IONEX: TEC maps (tec command), Ionospheric Pierce Points (ipp command)
+ionex = ["gnss-qc/ionex", "dep:ionex"]
 
 # Embeds the ANISE dataset at build time: no Internet access at runtime
 embed_ephem = ["navigation", "gnss-qc/embed_ephem"]
@@ -41,7 +41,8 @@ embed_ephem = ["navigation", "gnss-qc/embed_ephem"]
 pdf = ["dep:typst-as-lib", "dep:typst-pdf", "dep:typst-layout"]
 
 [dependencies.gnss-qc]
-version = "0.6"
+git = "https://github.com/nav-solutions/gnss-qc"
+branch = "develop"
 default-features = false
 features = [
     "sp3",
@@ -74,6 +75,12 @@ features = [
 [dependencies.cggtts]
 version = "4"
 optional = true
+
+[dependencies.ionex]
+version = "0.2"
+optional = true
+default-features = false
+features = ["flate2"]
 
 [dependencies.typst-as-lib]
 version = "0.18"

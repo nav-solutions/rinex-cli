@@ -14,7 +14,8 @@ and presents the results as data files and reports.
 
 ```text
  RINEX, CRINEX, SP3 ─► indexing ─► GNSS-Qc engine ─► output stream ─┬─► data/*.csv, results.jsonl, stdout
- (gzip or not)        (receivers,   (synchronization,               ├─► CGGTTS, GPX, KML
+ IONEX                (receivers,   (synchronization,               ├─► CGGTTS, GPX, KML, IONEX
+ (gzip or not)
                        agencies,     quality control,               ├─► summary.json
                        aliases)      navigation..)                  └─► report.html, report.pdf
 ```
@@ -22,7 +23,10 @@ and presents the results as data files and reports.
 - Quality control: sampling, data gaps, signal strength, lock losses, ephemeris coverage
 - Post processed navigation: SPP, CPP, PPP, RTK (`navigation` feature)
 - CGGTTS solutions: common view time transfer (`cggtts` feature)
-- Residual analysis: receiver A − receiver B, orbital product A − product B
+- Residual analysis: receiver A − receiver B, orbital product A − product B,
+  clock product A − product B (two analysis centers)
+- Meteo sensors analysis (Meteo RINEX)
+- TEC maps analysis, temporal interpolation and IONEX synthesis (`ionex` feature)
 - Ionospheric Pierce Points (`ionex` feature)
 - File operations: filegen, merge, split, tbin, cbin, diff
 
@@ -38,7 +42,7 @@ cargo install rinex-cli --all-features
 |---------|-------------|
 | `navigation` | `nav` command: P.V.T solutions (GNSS-RTK). The heaviest option. `ppp` is a legacy alias |
 | `cggtts` | `cggtts` command (implies `navigation`) |
-| `ionex` | `ipp` command |
+| `ionex` | IONEX inputs: `tec` and `ipp` commands |
 | `embed_ephem` | Embeds the ANISE dataset at build time: no Internet access at runtime |
 | `pdf` | PDF reports (Typst engine, embedded fonts) |
 
@@ -74,8 +78,8 @@ WORKSPACE/ESBC00DNK_R_20201770000_01D_30S_MO/
 ## Inputs and indexing
 
 Files are loaded with `-f FILE` and `-d DIRECTORY` (recursive, `--depth`), as many times as needed.
-RINEX, CRINEX and SP3 are supported, gzip compressed or not (detected from the content:
-file names do not matter).
+RINEX (observation, navigation, meteo, clock), CRINEX, SP3 and IONEX (`ionex` feature)
+are supported, gzip compressed or not (detected from the content: file names do not matter).
 
 Every file is identified (*indexed*) by GNSS-Qc. Files that share the same identity and type
 are merged. Default identities:
@@ -83,11 +87,13 @@ are merged. Default identities:
 | Product | Identity |
 |---------|----------|
 | Observations | `receiver:MODEL #SERIAL`, otherwise antenna, operator, file name |
-| Navigation, meteo, clock | `agency:NAME`, otherwise file name |
+| Navigation, meteo | `agency:NAME`, otherwise file name |
+| Clock | `agency:NAME`, otherwise analysis center code (`agency:GRG`, `agency:COM`), otherwise file name |
 | SP3 | `agency:NAME`, otherwise file name |
+| IONEX | `agency:NAME` (`RUN BY`), otherwise file name |
 
 Customize the indexing per product type with `--obs-index`, `--nav-index`, `--sp3-index`,
-`--meteo-index`, `--clk-index` (`receiver`, `antenna`, `operator`, `agency`, `filename`, `auto`,
+`--meteo-index`, `--clk-index`, `--ionex-index` (`receiver`, `antenna`, `operator`, `agency`, `filename`, `auto`,
 `alias:NAME`), or give an alias to a file or a directory: `-f ALIAS=FILE`, `-d ALIAS=DIR`.
 `--input-cfg cfg.json` loads the preferences (`QcInputConfig`) from a file.
 
@@ -119,7 +125,7 @@ Preprocessing (`-G -R -E -C -J -I -S --CG`, `-P FILTER`, `-z`) applies to each f
 | `--session NAME` | Session subfolder (default: primary file name) |
 | `--report html,pdf,none` | Report formats (default `html`) |
 | `--data csv,jsonl,none` | Data formats (default `csv`) |
-| `--raw` | Also export the raw signal observations |
+| `--raw` | Also export the raw signal observations and TEC map nodes |
 | `--stdout` | Stream the results on stdout (JSON lines), logs go to stderr |
 | `--title`, `--open`, `-q` | Report title, open the report, quiet |
 
@@ -137,6 +143,9 @@ model. The JSON lines deserialize into `gnss_qc::prelude::QcOutputItem` (serde f
 | `cggtts` | CGGTTS solutions, same navigation options + `--station`, `--frame`, `--min-track`, `--solutions` |
 | `residuals obs` | Receiver A − receiver B: `--lhs`, `--rhs`, `--all`, `--tolerance` |
 | `residuals orbit` | Product A − product B: `--lhs`, `--rhs` (`sp3`, `sp3:PRODUCT`, `nav`, `nav:PRODUCT`), `--sampling`, `--max-age`, `-c` |
+| `residuals clock` | Clock product A − product B: `--lhs`, `--rhs` (`clk`, `clk:PRODUCT`, `sp3`, `sp3:PRODUCT`, `nav`, `nav:PRODUCT`), `--sampling`, `--alignment`, `--satellites-only`, `--stations-only`, `-c`. See [clock residuals](documentation/ClockResiduals.md) |
+| `meteo` | Meteo sensors: statistics and time series (`--observables`). See [meteo](documentation/Meteo.md) |
+| `tec` | TEC maps (IONEX): statistics per region (`--region`), temporal interpolation (`--upsample`, `--resample`, `--interpolation`), IONEX synthesis (`--no-ionex`, `--gzip`). See [TEC maps](documentation/TEC.md) |
 | `ipp` | Ionospheric Pierce Points: `--elevation-mask`, `--shell-altitude`, `--orbits`, `-c` |
 | `filegen` | Writes the (preprocessed) products as RINEX / SP3 |
 | `merge FILE` | Merges a file into the product of the same kind |
