@@ -1,11 +1,11 @@
 [package]
 name = "rinex-cli"
-version = "0.13.0"
+version = "0.14.0"
 license = "MPL-2.0"
 authors = ["Guillaume W. Bres <guillaume.bressaix@gmail.com>"]
-description = "RINEX and SP3 data post processing tool"
-homepage = "https://github.com/rtk-rs"
-repository = "https://github.com/rtk-rs/rinex-cli"
+description = "GNSS data post processing and quality control, powered by GNSS-Qc"
+homepage = "https://github.com/nav-solutions"
+repository = "https://github.com/nav-solutions/rinex-cli"
 keywords = ["geo", "gps", "rinex", "galileo", "timing"]
 categories = [
     "science",
@@ -13,91 +13,88 @@ categories = [
     "command-line-utilities",
 ]
 edition = "2021"
+rust-version = "1.89"
 readme = "README.md"
 exclude = [
     "data/*",
 ]
 
-[package.metadata]
-msrv = "1.82"
-
 [features]
-# PPP and PPP+CGGTTS are not supported by default, because they are quite heavy.
-default = ["csv"]
+default = []
 
-# Activate PVT solutions solver (ppp command-line option)
-ppp = [
-    "dep:gnss-rtk",
-    "gnss-qc/navigation",
-    "gnss-qc/embed_ephem",
-]
+# P.V.T solutions (nav command): GNSS-RTK solver, ANISE almanac.
+navigation = ["gnss-qc/navigation"]
 
-# Activate the CGGTTS solutions solver (ppp with --cggtts command-line option)
-cggtts = [
-    "ppp",
-    "dep:gnss-rtk",
-    "dep:cggtts",
-    "gnss-qc/navigation",
+# Legacy name of the navigation option
+ppp = ["navigation"]
+
+# CGGTTS solutions (cggtts command)
+cggtts = ["navigation", "gnss-qc/cggtts", "dep:cggtts"]
+
+# Ionospheric Pierce Points (ipp command)
+ionex = ["gnss-qc/ionex"]
+
+# Embeds the ANISE dataset at build time: no Internet access at runtime
+embed_ephem = ["navigation", "gnss-qc/embed_ephem"]
+
+# PDF reports (Typst engine, embedded fonts)
+pdf = ["dep:typst-as-lib", "dep:typst-pdf", "dep:typst-layout"]
+
+[dependencies.gnss-qc]
+version = "0.6"
+default-features = false
+features = [
+    "sp3",
+    "flate2",
+    "serde",
+    "log",
 ]
 
 [dependencies.rinex]
-git = "https://github.com/nav-solutions/rinex"
-rev = "a10b41abb0ccd6b804dff6acd560992cdcd4c639"
+version = "0.25.0-alpha"
 features = [
-    "qc", 
-    "processing", 
-    "obs", 
-    "nav", 
-    "ut1", 
-    "meteo", 
-    "clock", 
-    "antex", 
+    "obs",
+    "meteo",
+    "clock",
+    "antex",
+    "qc",
+    "processing",
     "serde",
+    "flate2",
 ]
 
-[dependencies.gnss-qc]
-git = "ssh://git@github.com/nav-solutions/gnss-qc.git"
-rev = "8265828ee4c6ed1cfc6a3782962156a6858aea15"
+[dependencies.sp3]
+version = "1.5"
 features = [
-    "sp3",
-    "navigation",
+    "qc",
+    "processing",
     "flate2",
 ]
 
 [dependencies.cggtts]
-git = "https://github.com/nav-solutions/cggtts"
-rev = "9547b02ca8b78c99d8a1f1f6be87dc38c7e2f098"
+version = "4"
 optional = true
-features = [
-    "serde",
-    "scheduler",
-    "tracker",
-]
 
-[dependencies.gnss-rtk]
-git = "https://github.com/nav-solutions/gnss-rtk"
-rev = "bf0914fb9134eef35a3ef73bc105d5ec28fa783b"
+[dependencies.typst-as-lib]
+version = "0.18"
 optional = true
 features = [
-    "serde",
+    "typst-kit-fonts",
+    "typst-kit-embed-fonts",
 ]
 
 [dependencies]
 log = "0.4"
-walkdir = "2.4.0"
-geo-types = "0.7.11"
+walkdir = "2.4"
 env_logger = "0.11"
-serde_json = "1"
-lazy_static = "1.4"
 thiserror = "2"
 itertools = "0.14"
 maud = "0.26"
-plotly = "0.9"
-kml = { version = "0.8", optional = true }
-gpx = { version = "0.10", optional = true }
-csv = { version = "1.3", optional = true }
-gnss-rs = { version = "2.5", features = ["serde"] }
-clap = { version = "4.4.13", features = ["derive", "color"] }
-hifitime = { version = "4.1", features = ["serde", "std"] }
-anise = { version = "0.5.3", features = ["embed_ephem"] }
-serde = { version = "1.0", default-features = false, features = ["derive"] }
+serde_json = "1"
+serde = { version = "1", features = ["derive"] }
+clap = { version = "4.4", features = ["derive", "color", "env", "wrap_help"] }
+gnss-qc-traits = { version = "0.6", features = ["processing"] }
+gnss-rs = { version = "2", features = ["serde"] }
+hifitime = { version = "4", features = ["serde", "std"] }
+typst-pdf = { version = "0.15", optional = true }
+typst-layout = { version = "0.15", optional = true }

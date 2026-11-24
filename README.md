@@ -1,191 +1,177 @@
 RINEX-Cli
 =========
 
-[![Rust](https://github.com/rtk-rs/rinex-cli/actions/workflows/rust.yml/badge.svg)](https://github.com/rtk-rs/rinex-cli/actions/workflows/rust.yml)
-[![Rust](https://github.com/rtk-rs/rinex-cli/actions/workflows/daily.yml/badge.svg)](https://github.com/rtk-rs/rinex-cli/actions/workflows/daily.yml)
+[![Rust](https://github.com/nav-solutions/rinex-cli/actions/workflows/rust.yml/badge.svg)](https://github.com/nav-solutions/rinex-cli/actions/workflows/rust.yml)
+[![Rust](https://github.com/nav-solutions/rinex-cli/actions/workflows/daily.yml/badge.svg)](https://github.com/nav-solutions/rinex-cli/actions/workflows/daily.yml)
 [![crates.io](https://img.shields.io/crates/v/rinex-cli.svg)](https://crates.io/crates/rinex-cli)
 
-[![MRSV](https://img.shields.io/badge/MSRV-1.82.0-orange?style=for-the-badge)](https://github.com/rust-lang/rust/releases/tag/1.82.0)
+[![MRSV](https://img.shields.io/badge/MSRV-1.92.0-orange?style=for-the-badge)](https://github.com/rust-lang/rust/releases/tag/1.92.0)
 [![License](https://img.shields.io/badge/license-MPL_2.0-orange?style=for-the-badge&logo=mozilla)](https://github.com/rtk-rs/rinex-cli/blob/main/LICENSE)
 
-`rinex-cli` is a command line tool to post process RINEX and SP3 files.
+`rinex-cli` is the reference application of the [NAV-Solutions framework](https://github.com/nav-solutions):
+it deploys the [GNSS-Qc](https://github.com/nav-solutions/gnss-qc) engine on your data
+and presents the results as data files and reports.
 
-Because RINEX and SP3 cover many applications, `rinex-cli` can be used for many applications. 
-The most important being:
-
-- File management
-  - patching & reworking (for example: zero repair)
-  - splitting: create a batch of files
-  - transposing: to a single timescale, into a batch of timescales
-  - reformat: export to CSV
-- Analysis 
-  - generate high level reports
-- Synthesis
-  - generate RINEX (and soon SP3) from provided products
-- Post processed navigation (`ppp` mode) because it integrates a complete
-PVT solver (on `ppp` feature only)
-- CGGTTS solutions solver (`ppp --cggtts` mode) by combining the `ppp` **and** `cggtts` options
-
-<div align="center">
-    <p>
-        Static surveying of a geodetic marker:
-    </p>
-    <a href=https://github.com/rtk-rs/rinex-cli/blob/main/plots/front-page/map.png>
-        <img src=https://github.com/rtk-rs/rinex-cli/blob/main/plots/front-page/map.png alt="Plot">
-    </a>
-</div>
-
-<div align="center">
-    <p>
-        Errors from the geodetic marker (CPP, Galileo E1+E5)
-    </p>
-    <a href=https://github.com/rtk-rs/rinex-cli/blob/main/plots/front-page/coordinates.png>
-        <img src=https://github.com/rtk-rs/rinex-cli/blob/main/plots/front-page/coordinates.png alt="Plot">
-    </a>
-</div>
-
-<div align="center">
-    <p>
-        `PPP` solver applied to a roaming session (pedestrian profile) around station `NYA100NOR`
-    </p>
-    <a href=https://github.com/rtk-rs/rinex-cli/blob/main/plots/front-page/roaming-ppp1.png>
-        <img src=https://github.com/rtk-rs/rinex-cli/blob/main/plots/front-page/roaming-ppp1.png alt="Plot">
-    </a>
-</div>
-
-<div align="center">
-    <p>
-        REFSYS resolved from PPP+CGGTTS (CPP, Galileo E1+E5)
-    </p>
-    <a href=https://github.com/rtk-rs/rinex-cli/blob/main/plots/front-page/refsys.png>
-        <img src=https://github.com/rtk-rs/rinex-cli/blob/main/plots/front-page/refsys.png alt="Plot">
-    </a>
-</div>
-
-## Download the tool
-
-You can download the latest version from [the release portal](https://github.com/rtk-rs/rinex-cli/releases).
-
-Two version of the toolbox are automatically released:
-
-* the smallest is published under the name `rinex-cli` and is only compatible with file management
-* the heaviest allows all features, including the NAV PVT Solver and NAV CGGTTS solutions solver, and is published
-under the name `rinex-cli-ppp`
-
-## Install from Cargo
-
-You can directly install the tool from Cargo with internet access:
-
-```bash
-cargo install rinex-cli
+```text
+ RINEX, CRINEX, SP3 ─► indexing ─► GNSS-Qc engine ─► output stream ─┬─► data/*.csv, results.jsonl, stdout
+ (gzip or not)        (receivers,   (synchronization,               ├─► CGGTTS, GPX, KML
+                       agencies,     quality control,               ├─► summary.json
+                       aliases)      navigation..)                  └─► report.html, report.pdf
 ```
 
-## Build from sources
+- Quality control: sampling, data gaps, signal strength, lock losses, ephemeris coverage
+- Post processed navigation: SPP, CPP, PPP, RTK (`navigation` feature)
+- CGGTTS solutions: common view time transfer (`cggtts` feature)
+- Residual analysis: receiver A − receiver B, orbital product A − product B
+- Ionospheric Pierce Points (`ionex` feature)
+- File operations: filegen, merge, split, tbin, cbin, diff
 
-Download the version you are interested in:
-
-```bash
-git clone https://github.com/rtk-rs/rinex-cli
-```
-
-If you're interested in running one of the demos, you should enable all features
-and should download our example data set:
+## Install
 
 ```bash
-git clone --recurse-submodules https://github.com/rtk-rs/rinex-cli
+cargo install rinex-cli                        # quality control, residuals, file operations
+cargo install rinex-cli --features cggtts,pdf  # + navigation, CGGTTS, PDF reports
+cargo install rinex-cli --all-features
 ```
 
-To install in the default location, in this example activating all features,
-you should run this:
+| Feature | Description |
+|---------|-------------|
+| `navigation` | `nav` command: P.V.T solutions (GNSS-RTK). The heaviest option. `ppp` is a legacy alias |
+| `cggtts` | `cggtts` command (implies `navigation`) |
+| `ionex` | `ipp` command |
+| `embed_ephem` | Embeds the ANISE dataset at build time: no Internet access at runtime |
+| `pdf` | PDF reports (Typst engine, embedded fonts) |
+
+## Quick start
+
+1. Verify how your files are identified (nothing is processed):
 
 ```bash
-cargo install --all-features --path .
-rinex-cli --version
-
-which rinex-cli
-${HOME}/.cargo/bin/rinex-cli
+rinex-cli -d data/CRNX/V3 -f data/NAV/V3/ESBC00DNK_R_20201770000_01D_MN.rnx.gz index
 ```
 
-## File formats & revisions
+2. Run a command, results are written in `WORKSPACE/<session>/`:
 
-`rinex-cli` supports 
+```bash
+rinex-cli \
+    -f data/CRNX/V3/ESBC00DNK_R_20201770000_01D_30S_MO.crx.gz \
+    -f data/NAV/V3/ESBC00DNK_R_20201770000_01D_MN.rnx.gz \
+    -f data/SP3/C/GRG0MGXFIN_20201770000_01D_15M_ORB.SP3.gz \
+    --report html,pdf --open \
+    nav --method ppp --static
+```
 
-- all formats & revisions supported by [the RINEX parser](https://github.com/rtk-rs/rinex)
-- all revisions supported by [the SP3 parser](https://github.com/rtk-rs/sp3)
+```text
+WORKSPACE/ESBC00DNK_R_20201770000_01D_30S_MO/
+├── report.html          interactive report
+├── report.pdf           static report (pdf feature)
+├── summary.json         configuration, inputs, statistics, end of session reports
+└── data/
+    ├── solutions.csv    one file per kind of result
+    └── results.jsonl    complete output stream (--data jsonl)
+```
 
-Summary:
+## Inputs and indexing
 
-| Format                 | File name restrictions            |    Support                         |
-|------------------------|-----------------------------------|------------------------------------|
-| RINEX                  | :heavy_minus_sign:                | :heavy_check_mark:                 |
-| CRINEX                 | :heavy_minus_sign:                | :heavy_check_mark:                 | 
-| gzip compressed RINEX  | Name must end with `.gz`          | :heavy_check_mark:                 | 
-| gzip compressed CRINEX | Name must end with `.gz`          | :heavy_check_mark:                 | 
-| .Z compressed RINEX    | Not supported                     | Not supported                      |
-| DORIS RINEX            | :heavy_minus_sign:                | :construction: Work in progress    |
-| gzip compressed DORIS  | Name must end with `.gz`          | 
-| .Z compressed DORIS    | Not supported                     | Not supported                      |
-| SP3                    | :heavy_minus_sign:                | :heavy_check_mark:                 | 
-| gzip compressed SP3    | Name must end with `.gz`          | :heavy_check_mark:                 | 
-| .Z compressed SP3      | Not supported                     | Not supported                      |
-| BINEX                  | :heavy_minus_sign:                | :heavy_minus_sign:                 |
-| UBX                    | :heavy_minus_sign:                | :heavy_minus_sign:                 |
+Files are loaded with `-f FILE` and `-d DIRECTORY` (recursive, `--depth`), as many times as needed.
+RINEX, CRINEX and SP3 are supported, gzip compressed or not (detected from the content:
+file names do not matter).
 
-:heavy_minus_sign: No restrictions: file names do not have to follow naming conventions.  
+Every file is identified (*indexed*) by GNSS-Qc. Files that share the same identity and type
+are merged. Default identities:
 
-## Documentation
+| Product | Identity |
+|---------|----------|
+| Observations | `receiver:MODEL #SERIAL`, otherwise antenna, operator, file name |
+| Navigation, meteo, clock | `agency:NAME`, otherwise file name |
+| SP3 | `agency:NAME`, otherwise file name |
 
-:warning: All our examples and demos are expected to be execute at the base of this repo.
+Customize the indexing per product type with `--obs-index`, `--nav-index`, `--sp3-index`,
+`--meteo-index`, `--clk-index` (`receiver`, `antenna`, `operator`, `agency`, `filename`, `auto`,
+`alias:NAME`), or give an alias to a file or a directory: `-f ALIAS=FILE`, `-d ALIAS=DIR`.
+`--input-cfg cfg.json` loads the preferences (`QcInputConfig`) from a file.
 
-Once you have installed the tool, read the first few steps:
+Typical situations:
 
-- [File loading interface](./documentation/FileLoading.md): learn how to load data into the toolbox
-- [The Preprocessor documentation](./documentation/Preprocessor.md) will teach you
-how design a filter and deploy up to complex processing pipelines
-- [The Input / Output page](./documentation/InputOutput.md) summarizes the output you can
-generate, based on your input products
+```bash
+# two stations equipped with the same receiver model and no serial number:
+# without aliases they would be merged
+rinex-cli -f rover=ROVER.crx -f base=BASE.crx -f BRDC.rnx index
 
-Then, continue your learning journey with:
+# rapid and final products of the same agency: by default they would be merged
+rinex-cli -f rap=RAP.SP3 -f fin=FIN.SP3 residuals orbit --lhs sp3:rap --rhs sp3:fin
 
-- [`merge` mode](./documentation/Merge.md): to merge RINEX files together,
-which is particularly useful in Data production context & files management
+# or one product per file
+rinex-cli --sp3-index filename -f FIN.SP3 -f RAP.SP3 index
+```
 
-- [`split` mode](./documentation/Split.md): divide/split your input products at a specific point in time (`Epoch`)
+Products are designated by their identity, as printed by `index`
+(`--rover "receiver:SEPT POLARX5 #3047937"`, `--lhs agency:GRGS`), or by name when unique.
 
-- [`tbin` (time) binning mode](./documentation/TBin.md) create a batch (file series) of RINEX of equal duration
+Preprocessing (`-G -R -E -C -J -I -S --CG`, `-P FILTER`, `-z`) applies to each file before indexing.
+`--start` and `--end` restrict the processing window.
 
-- [`cbin` (Constellation /Timescale) binning mode](./demos/CBIN.md) to split Multi-GNSS RINEX into individual
-Constellations, with possible Timescale re-expression
+## Outputs
 
-- [`diff` mode](./demos/DIFF.md): create a special RINEX=RINEX(A)-RINEX(B)
-by substracting two observation RINEX files together, per frequency and signal modulations
+| Option | Description |
+|--------|-------------|
+| `-o, --output DIR` | Output folder (`$RINEX_WORKSPACE`, default `WORKSPACE`) |
+| `--session NAME` | Session subfolder (default: primary file name) |
+| `--report html,pdf,none` | Report formats (default `html`) |
+| `--data csv,jsonl,none` | Data formats (default `csv`) |
+| `--raw` | Also export the raw signal observations |
+| `--stdout` | Stream the results on stdout (JSON lines), logs go to stderr |
+| `--title`, `--open`, `-q` | Report title, open the report, quiet |
 
-- [`filegen` mode](./documentation/Filegen.md): generate output products (RINEX, SP3, CSV..)
-after a possible preprocessing pipeline. Use this to either reformat RINEX or perform a RINEX to CSV conversion.
+The HTML report is a single interactive page (plotly.js is loaded from its CDN). The PDF report
+is static: it is meant to be archived, printed or delivered. Both are built from the same report
+model. The JSON lines deserialize into `gnss_qc::prelude::QcOutputItem` (serde feature).
 
-## Post Processed Positioning
+## Commands
 
-Dive into the world of precise navigation:
+| Command | Description |
+|---------|-------------|
+| `index` | Lists the input products, as indexed (`--json`) |
+| `qc` | Quality control of the signal sources |
+| `nav` | P.V.T solutions: `--method spp\|cpp\|ppp`, `--rover`, `--base` (RTK), `--orbits auto\|precise\|broadcast`, `-c gps,gal`, `--profile`, `--static`, `--clock`, `--apriori`, `--reference`, `--cfg nav.json`, `--anise-dir`, `--gpx`, `--kml` |
+| `cggtts` | CGGTTS solutions, same navigation options + `--station`, `--frame`, `--min-track`, `--solutions` |
+| `residuals obs` | Receiver A − receiver B: `--lhs`, `--rhs`, `--all`, `--tolerance` |
+| `residuals orbit` | Product A − product B: `--lhs`, `--rhs` (`sp3`, `sp3:PRODUCT`, `nav`, `nav:PRODUCT`), `--sampling`, `--max-age`, `-c` |
+| `ipp` | Ionospheric Pierce Points: `--elevation-mask`, `--shell-altitude`, `--orbits`, `-c` |
+| `filegen` | Writes the (preprocessed) products as RINEX / SP3 |
+| `merge FILE` | Merges a file into the product of the same kind |
+| `split EPOCH` | Splits the products at this epoch |
+| `tbin DURATION` | Batch of files of this duration |
+| `cbin` | One file per constellation (`--timescale`) |
+| `diff FILE` | Observation RINEX (A) − FILE (B) |
 
-- [`ppp` opmode introduction](./documentation/PPP.md): resolve PVT solutions
-- [`ppp` with special `--cggtts` option](./documentation/CGGTTS.md): resolve CGGTTS solutions
+`rinex-cli <command> --help` describes every option.
 
-Examples
-========
+### ANISE dataset
 
-[Many examples](./examples/README.md) are provided for each mode individually.
+Navigation requires the ANISE dataset (planetary ephemeris and constants). By default, it is
+downloaded on first use and cached. Offline deployments: build with `embed_ephem`, or provide
+local files with `--anise-dir DIR` (`$GNSS_QC_ANISE_DIR`): `de440s.bsp` and `pck11.pca`.
 
-Demos
-=====
+## Migrating from v0.13
 
-Our [Demo folder](./demos) hosts many illustrations and high level applications
+| v0.13 | v0.14 |
+|-------|-------|
+| `--fp FILE` | `-f FILE` |
+| `-f` (force report) | removed: reports are always generated |
+| `-w FOLDER` | `-o FOLDER` |
+| `-o NAME` (output name) | `--session NAME`, `--title` |
+| `--sum`, `--jpl-bpc` | removed |
+| `--rx-ecef x,y,z` (km) | `nav --apriori x,y,z` (m) or `--reference x,y,z` (m) |
+| `ppp` | `nav --method spp\|cpp\|ppp` |
+| `rtk --fp BASE` | `-f base=BASE nav --base base` |
+| `ppp --cggtts` | `cggtts` |
+| `ppp -c cfg.json` (GNSS-RTK `Config`) | `nav --cfg nav.json` (GNSS-Qc `QcNavigationConfig`) |
+| `--nav healthy` | not supported yet |
+| `filegen --csv` | `qc --raw --data csv` |
 
-Toolbox features
-================
-
-- `csv`: unlock CSV export (default)
-- `ppp`: unlock P.V.T. solver (not available by default, because it is heavy)
-- `ppp+cggtts`: unlock CGGTTS solver (not available by default, because it is heavy)
+Clock RINEX, meteo RINEX and IONEX are loaded but not processed yet: GNSS-Qc does not
+convert them into engine sources.
 
 Special Thanks
 ==============
@@ -199,5 +185,5 @@ our countless discussions. Check out his
 
 ## Licensing
 
-This application is part of the [RTK-rs framework](https://github.com/rtk-rs) which
-is delivered under the [Mozilla V2 Public](https://www.mozilla.org/en-US/MPL/2.0) license.
+This application is part of the [NAV-Solutions framework](https://github.com/nav-solutions) 
+and is licensed under [Mozilla V2 Public](https://www.mozilla.org/en-US/MPL/2.0) license.
