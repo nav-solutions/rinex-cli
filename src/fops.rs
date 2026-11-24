@@ -176,7 +176,7 @@ fn time_window(rinex: &Rinex, start: Epoch, end: Option<Epoch>) -> Result<Rinex,
 fn parse_rinex(path: &Path, preprocessor: &Preprocessor) -> Result<Rinex, Error> {
     match parse(path) {
         Some(Parsed::Rinex(mut rinex)) => {
-            preprocessor.rinex(&mut rinex);
+            preprocessor.rinex(path, &mut rinex);
             Ok(*rinex)
         },
         _ => Err(Error::FormatNotSupported(path.display().to_string())),

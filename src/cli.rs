@@ -141,6 +141,20 @@ pub struct PreprocessingArgs {
     /// Remove null observations (zero repair)
     #[arg(short = 'z', long = "zero-repair", global = true)]
     pub zero_repair: bool,
+
+    /// Snap the epochs of the observation RINEX to the nearest second, correcting the
+    /// pseudo ranges (c·Δt) and phase ranges (f·Δt). Aligns the free running time tags of
+    /// low cost receivers (16:25:42.999) on those of a reference station (16:25:43): required
+    /// for RTK. Applied before the filters.
+    #[arg(long, global = true)]
+    pub snap_epochs: bool,
+
+    /// Keep the observation epochs that are multiples of this period (for example "30 s"),
+    /// to match the sampling of a reference station. Unlike a decimation (-P "decim:30 s"),
+    /// the retained instants do not depend on the first epoch of each file.
+    /// Applied after --snap-epochs, before the filters.
+    #[arg(long, value_name = "PERIOD", global = true, value_parser = parse_duration)]
+    pub align_sampling: Option<gnss_qc::prelude::Duration>,
 }
 
 /// Report format
@@ -785,6 +799,25 @@ pub struct IppArgs {
     pub constellations: Vec<String>,
 }
 
+/// Parses a duration: "30 s", "30s", "1 min", or a number of seconds ("30")
+pub fn parse_duration(text: &str) -> Result<gnss_qc::prelude::Duration, String> {
+    use gnss_qc::prelude::Duration;
+    let text = text.trim();
+    if let Ok(seconds) = f64::from_str(text) {
+        return Ok(Duration::from_seconds(seconds));
+    }
+    if let Ok(duration) = Duration::from_str(text) {
+        return Ok(duration);
+    }
+    // unit glued to the value: "30s", "15min"
+    let split = text
+        .find(|c: char| c.is_ascii_alphabetic())
+        .ok_or(format!("invalid duration \"{}\"", text))?;
+    let (value, unit) = text.split_at(split);
+    Duration::from_str(&format!("{} {}", value.trim(), unit))
+        .map_err(|e| format!("invalid duration \"{}\": {}", text, e))
+}
+
 /// Parses "x,y,z" coordinates
 #[cfg_attr(not(feature = "navigation"), allow(dead_code))]
 pub fn parse_coordinates(text: &str) -> Result<(f64, f64, f64), Error> {
@@ -866,6 +899,15 @@ mod test {
         assert!(IndexingMethod::from_str("alias:").is_err());
         assert_eq!(parse_coordinates("1.0, -2.5,3").unwrap(), (1.0, -2.5, 3.0));
         assert!(parse_coordinates("1,2").is_err());
+        for text in ["30 s", "30s", "30", " 0.5 min"] {
+            assert_eq!(
+                parse_duration(text).unwrap(),
+                gnss_qc::prelude::Duration::from_seconds(30.0),
+                "{}",
+                text
+            );
+        }
+        assert!(parse_duration("abc").is_err());
         assert_eq!(
             parse_constellations(&["gps".to_string(), "Gal".to_string()])
                 .unwrap()

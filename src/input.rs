@@ -321,6 +321,8 @@ pub fn parse(path: &Path) -> Option<Parsed> {
 pub struct Preprocessor {
     filters: Vec<Filter>,
     zero_repair: bool,
+    snap_epochs: bool,
+    align_sampling: Option<Duration>,
 }
 
 impl Preprocessor {
@@ -359,10 +361,43 @@ impl Preprocessor {
         Ok(Self {
             filters,
             zero_repair: args.zero_repair,
+            snap_epochs: args.snap_epochs,
+            align_sampling: args.align_sampling,
         })
     }
 
-    pub fn rinex(&self, rinex: &mut Rinex) {
+    pub fn rinex(&self, path: &Path, rinex: &mut Rinex) {
+        if self.snap_epochs && rinex.header.rinex_type == RinexType::ObservationData {
+            let report = crate::snap::snap_epochs(rinex);
+            if report.shifted > 0 {
+                info!(
+                    "{}: {} epochs snapped to the second (largest correction {:.3} ms)",
+                    path.display(),
+                    report.shifted,
+                    report.max_shift_s * 1.0E3
+                );
+            }
+            if report.collisions > 0 {
+                warn!(
+                    "{}: {} epochs dropped (snapped to an existing second)",
+                    path.display(),
+                    report.collisions
+                );
+            }
+        }
+        if let Some(period) = self.align_sampling {
+            if rinex.header.rinex_type == RinexType::ObservationData {
+                let dropped = crate::snap::align_sampling(rinex, period);
+                if dropped > 0 {
+                    info!(
+                        "{}: {} epochs dropped (not a multiple of {})",
+                        path.display(),
+                        dropped,
+                        period
+                    );
+                }
+            }
+        }
         for filter in self.filters.iter() {
             rinex.filter_mut(filter);
         }
@@ -591,7 +626,7 @@ impl Inputs {
             // (exact identity), then merged into the session table.
             let entry = match parsed {
                 Parsed::Rinex(mut rinex) => {
-                    preprocessor.rinex(&mut rinex);
+                    preprocessor.rinex(path, &mut rinex);
 
                     let mut single = QcInputProducts::default();
                     single
