@@ -10,7 +10,8 @@ RINEX-Cli
 
 `rinex-cli` is the reference application of the [NAV-Solutions framework](https://github.com/nav-solutions):
 it deploys the [GNSS-Qc](https://github.com/nav-solutions/gnss-qc) engine on your data
-and presents the results as data files and reports.
+and presents the results as data files and reports. It is dedicated to post-processing,
+not real-time navigation, and emphasizes a fraction of what `gnss-qc` offers:
 
 ```text
  RINEX, CRINEX, SP3 ─► indexing ─► GNSS-Qc engine ─► output stream ─┬─► data/*.csv, results.jsonl, stdout
