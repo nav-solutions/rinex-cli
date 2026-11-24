@@ -46,68 +46,48 @@ jobs:
 
       - name: Galileo BRDC (+CPP)
         run: |
-            ./target/release/rinex-cli \
-                -f -q \
+            ./target/release/rinex-cli -q -o /tmp/WS --session brdc_cpp \
                 -P "Gal;C1C,C5Q" \
-                --fp data/CRNX/V3/MOJN00DNK_R_20201770000_01D_30S_MO.crx.gz \
-                --fp data/NAV/V3/MOJN00DNK_R_20201770000_01D_MN.rnx.gz \
-                ppp -c examples/CONFIG/Static/gpst_cpp.json |
+                -f data/CRNX/V3/MOJN00DNK_R_20201770000_01D_30S_MO.crx.gz \
+                -f data/NAV/V3/MOJN00DNK_R_20201770000_01D_MN.rnx.gz \
+                --report html,pdf \
+                nav --method cpp --static -c gal |
                 tee /tmp/logs/ppp/brdc_cpp_mojn_e1e5.logs
-      
+
       - name: Galileo BRDC (+CPP) (+CGGTTS)
         run: |
-            ./target/release/rinex-cli \
-                -f -q \
+            ./target/release/rinex-cli -q -o /tmp/WS --session brdc_cpp_cggtts \
                 -P "Gal;C1C,C5Q" \
-                --fp data/CRNX/V3/MOJN00DNK_R_20201770000_01D_30S_MO.crx.gz \
-                --fp data/NAV/V3/MOJN00DNK_R_20201770000_01D_MN.rnx.gz \
-                ppp --cggtts -c examples/CONFIG/Static/gpst_cpp.json |
+                -f data/CRNX/V3/MOJN00DNK_R_20201770000_01D_30S_MO.crx.gz \
+                -f data/NAV/V3/MOJN00DNK_R_20201770000_01D_MN.rnx.gz \
+                cggtts --method cpp --static -c gal |
                 tee /tmp/logs/cggtts/brdc_cpp_mojn_e1e5.logs
 
-      - name: Galileo Ultra (+CPP)
+      - name: Galileo Final (+CPP)
         run: |
-            ./target/release/rinex-cli \
-                -f -q \
+            ./target/release/rinex-cli -q -o /tmp/WS --session final_cpp \
                 -P "Gal;C1C,C5Q" \
-                --fp data/CRNX/V3/MOJN00DNK_R_20201770000_01D_30S_MO.crx.gz \
-                --fp data/NAV/V3/MOJN00DNK_R_20201770000_01D_MN.rnx.gz \
-                --fp data/SP3/C/GRG0MGXFIN_20201770000_01D_15M_ORB.SP3.gz \
-                --fp data/CLK/V3/GRG0MGXFIN_20201770000_01D_30S_CLK.CLK.gz \
-                ppp -c examples/CONFIG/Static/gpst_cpp.json |
-                tee /tmp/logs/ppp/ultra_cpp_mojn_e1e5.logs
-      
-      - name: Galileo Ultra (+CPP) (+CGGTTS)
+                -f data/CRNX/V3/MOJN00DNK_R_20201770000_01D_30S_MO.crx.gz \
+                -f data/NAV/V3/MOJN00DNK_R_20201770000_01D_MN.rnx.gz \
+                -f data/SP3/C/GRG0MGXFIN_20201770000_01D_15M_ORB.SP3.gz \
+                nav --method cpp --static -c gal |
+                tee /tmp/logs/ppp/final_cpp_mojn_e1e5.logs
+
+      - name: Galileo Final (+PPP)
         run: |
-            ./target/release/rinex-cli \
-                -f -q \
-                -P "Gal;C1C,C5Q" \
-                --fp data/CRNX/V3/MOJN00DNK_R_20201770000_01D_30S_MO.crx.gz \
-                --fp data/NAV/V3/MOJN00DNK_R_20201770000_01D_MN.rnx.gz \
-                --fp data/SP3/C/GRG0MGXFIN_20201770000_01D_15M_ORB.SP3.gz \
-                --fp data/CLK/V3/GRG0MGXFIN_20201770000_01D_30S_CLK.CLK.gz \
-                ppp --cggtts -c examples/CONFIG/Static/gpst_cpp.json |
-                tee /tmp/logs/cggtts/ultra_cpp_mojn_e1e5.logs
-      
-      - name: Galileo Ultra (+PPP)
-        run: |
-            ./target/release/rinex-cli \
-                -f -q \
+            ./target/release/rinex-cli -q -o /tmp/WS --session final_ppp \
                 -P "Gal;C1C,L1C,C5Q,L5Q" \
-                --fp data/CRNX/V3/MOJN00DNK_R_20201770000_01D_30S_MO.crx.gz \
-                --fp data/NAV/V3/MOJN00DNK_R_20201770000_01D_MN.rnx.gz \
-                --fp data/SP3/C/GRG0MGXFIN_20201770000_01D_15M_ORB.SP3.gz \
-                --fp data/CLK/V3/GRG0MGXFIN_20201770000_01D_30S_CLK.CLK.gz \
-                ppp -c examples/CONFIG/Static/gpst_cpp.json |
-                tee /tmp/logs/ppp/ultra_ppp_mojn_e1e5.logs
-      
-      - name: Galileo Ultra (+PPP) (+CGGTTS)
+                -f data/CRNX/V3/MOJN00DNK_R_20201770000_01D_30S_MO.crx.gz \
+                -f data/NAV/V3/MOJN00DNK_R_20201770000_01D_MN.rnx.gz \
+                -f data/SP3/C/GRG0MGXFIN_20201770000_01D_15M_ORB.SP3.gz \
+                nav --method ppp --static -c gal |
+                tee /tmp/logs/ppp/final_ppp_mojn_e1e5.logs
+
+      - name: RTK (+CPP) ESBC / MOJN
         run: |
-            ./target/release/rinex-cli \
-                -f -q \
-                -P "Gal;C1C,L1C,C5Q,L5Q" \
-                --fp data/CRNX/V3/MOJN00DNK_R_20201770000_01D_30S_MO.crx.gz \
-                --fp data/NAV/V3/MOJN00DNK_R_20201770000_01D_MN.rnx.gz \
-                --fp data/SP3/C/GRG0MGXFIN_20201770000_01D_15M_ORB.SP3.gz \
-                --fp data/CLK/V3/GRG0MGXFIN_20201770000_01D_30S_CLK.CLK.gz \
-                ppp --cggtts -c examples/CONFIG/Static/gpst_cpp.json |
-                tee /tmp/logs//cggtts/ultra_ppp_mojn_e1e5.logs
+            ./target/release/rinex-cli -q -o /tmp/WS --session rtk_cpp \
+                -f data/CRNX/V3/ESBC00DNK_R_20201770000_01D_30S_MO.crx.gz \
+                -f base=data/CRNX/V3/MOJN00DNK_R_20201770000_01D_30S_MO.crx.gz \
+                -f data/NAV/V3/ESBC00DNK_R_20201770000_01D_MN.rnx.gz \
+                nav --method cpp --base base |
+                tee /tmp/logs/ppp/rtk_cpp_esbc_mojn.logs
