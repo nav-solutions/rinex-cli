@@ -297,7 +297,34 @@ pub fn render(chart: &Chart) -> String {
     for (index, s) in series.iter().enumerate() {
         let color = PALETTE[index % PALETTE.len()];
 
-        if chart.kind == ChartKind::Lines {
+        if s.connected {
+            // segments (baselines..): every point connected, with markers
+            let mut path = String::new();
+            for (i, (x, y)) in s.x.iter().zip(s.y.iter()).enumerate() {
+                let _ = write!(
+                    path,
+                    "{}{:.1},{:.1}",
+                    if i == 0 { 'M' } else { 'L' },
+                    px(*x),
+                    py(*y)
+                );
+            }
+            let _ = write!(
+                svg,
+                r#"<path d="{}" fill="none" stroke="{c}" stroke-width="2"/><g fill="{c}">"#,
+                path,
+                c = color
+            );
+            for (x, y) in s.x.iter().zip(s.y.iter()) {
+                let _ = write!(
+                    svg,
+                    r#"<circle cx="{:.1}" cy="{:.1}" r="3.5"/>"#,
+                    px(*x),
+                    py(*y)
+                );
+            }
+            svg.push_str("</g>");
+        } else if chart.kind == ChartKind::Lines {
             // typical step, to break the lines over data gaps
             let mut steps =
                 s.x.windows(2)

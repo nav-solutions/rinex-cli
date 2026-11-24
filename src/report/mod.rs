@@ -169,6 +169,8 @@ pub struct Series {
     pub name: String,
     pub x: Vec<f64>,
     pub y: Vec<f64>,
+    /// Points connected by a line, whatever the kind of chart (segments, baselines..)
+    pub connected: bool,
 }
 
 impl Series {
@@ -177,7 +179,15 @@ impl Series {
             name: name.to_string(),
             x: Vec::new(),
             y: Vec::new(),
+            connected: false,
         }
+    }
+
+    /// Points connected by a line, whatever the kind of chart
+    #[allow(dead_code)] // only used by the navigation reports
+    pub fn connected(mut self) -> Self {
+        self.connected = true;
+        self
     }
 
     pub fn push(&mut self, x: f64, y: f64) {
@@ -195,6 +205,7 @@ impl Series {
             name: self.name.clone(),
             x: self.x.iter().step_by(step).copied().collect(),
             y: self.y.iter().step_by(step).copied().collect(),
+            connected: self.connected,
         }
     }
 }

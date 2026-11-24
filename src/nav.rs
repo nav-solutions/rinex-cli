@@ -25,6 +25,9 @@ pub struct NavigationSetup {
     /// RTK base
     pub base: Option<String>,
 
+    /// Position of the RTK base (ECEF m): configuration, otherwise its RINEX header
+    pub base_ecef_m: Option<(f64, f64, f64)>,
+
     /// Reference position of the rover (ECEF m), to express the errors
     pub reference_ecef_m: Option<(f64, f64, f64)>,
 
@@ -98,6 +101,54 @@ fn clock(arg: ClockArg) -> ClockProfile {
     }
 }
 
+/// Merges `patch` into `target`: objects are merged field by field,
+/// any other value (including arrays) is replaced.
+fn merge_json(target: &mut serde_json::Value, patch: serde_json::Value) {
+    match (target, patch) {
+        (serde_json::Value::Object(target), serde_json::Value::Object(patch)) => {
+            for (key, value) in patch {
+                match target.get_mut(&key) {
+                    Some(existing) => merge_json(existing, value),
+                    None => {
+                        target.insert(key, value);
+                    },
+                }
+            }
+        },
+        (target, patch) => *target = patch,
+    }
+}
+
+/// Parses a (possibly partial) navigation configuration: the fields that are
+/// not described in `content` keep the value of `defaults`.
+fn partial_configuration(
+    defaults: &QcNavigationConfig,
+    content: &str,
+) -> Result<QcNavigationConfig, Error> {
+    let mut value = serde_json::to_value(defaults)?;
+    let patch: serde_json::Value = serde_json::from_str(content)?;
+
+    if let serde_json::Value::Object(fields) = &patch {
+        let defaults = value
+            .as_object()
+            .map(|obj| obj.keys().cloned().collect::<Vec<_>>());
+        if let Some(known) = defaults {
+            for key in fields.keys() {
+                if !known.contains(key) {
+                    log::warn!(
+                        "navigation configuration: unknown field \"{}\" (expected one of: {})",
+                        key,
+                        known.join(", ")
+                    );
+                }
+            }
+        }
+    }
+
+    merge_json(&mut value, patch);
+    Ok(serde_json::from_value(value)?)
+}
+
 /// Builds the navigation configuration: configuration file, then command line options.
 /// `base`: RTK base designated by the user, with its possible position.
 pub fn configure(
@@ -105,13 +156,12 @@ pub fn configure(
     base: Option<(&str, Option<&str>)>,
     inputs: &Inputs,
 ) -> Result<(QcNavigationConfig, NavigationSetup), Error> {
-    let mut cfg = match &args.cfg {
-        Some(path) => {
-            let content = std::fs::read_to_string(path)?;
-            serde_json::from_str::<QcNavigationConfig>(&content)?
-        },
-        None => QcNavigationConfig::default().with_method(Method::CPP),
-    };
+    let mut cfg = QcNavigationConfig::default().with_method(Method::CPP);
+
+    if let Some(path) = &args.cfg {
+        let content = std::fs::read_to_string(path)?;
+        cfg = partial_configuration(&cfg, &content)?;
+    }
 
     if let Some(m) = args.method {
         cfg = cfg.with_method(method(m));
@@ -143,10 +193,13 @@ pub fn configure(
     };
 
     // RTK base
+    let mut base_ecef_m = None;
+
     let base = match base {
         Some((text, position)) => {
             let identity = inputs.resolve(text, ProductKind::Observation)?;
             let position = position.map(parse_coordinates).transpose()?;
+            base_ecef_m = position.or(inputs.reference_position(&identity));
             cfg.technique = QcNavigationTechnique::Rtk {
                 base: identity.clone(),
                 position_ecef_m: position,
@@ -154,10 +207,29 @@ pub fn configure(
             Some(identity)
         },
         None => match &cfg.technique {
-            QcNavigationTechnique::Rtk { base, .. } => Some(base.clone()),
+            QcNavigationTechnique::Rtk {
+                base,
+                position_ecef_m,
+            } => {
+                base_ecef_m = position_ecef_m.or(inputs.reference_position(base));
+                Some(base.clone())
+            },
             QcNavigationTechnique::Absolute => None,
         },
     };
+
+    // RTK + dual frequency: GNSS-RTK elects a single pivot satellite (all constellations)
+    // and only differences measurements on the same carriers. The satellites of the other
+    // constellations (L2 versus E5a..) cannot be differenced and are dropped.
+    if base.is_some() && cfg.solver.method != Method::SPP && cfg.constellations.len() > 1 {
+        log::warn!(
+            "RTK-{:?} with {} constellations: dual frequency double differences are only formed \
+             within the constellation of the pivot satellite, the other satellites are dropped. \
+             Prefer a single constellation (for example -c gps)",
+            cfg.solver.method,
+            cfg.constellations.len(),
+        );
+    }
 
     // Rover: designated, configured, or first signal source that is not the base
     let rover = match &args.rover {
@@ -223,6 +295,17 @@ pub fn configure(
         ("User profile".to_string(), user_description),
     ];
 
+    if let (Some(rover_ecef_m), Some(base_ecef_m)) = (reference_ecef_m, base_ecef_m) {
+        let length_m = ((rover_ecef_m.0 - base_ecef_m.0).powi(2)
+            + (rover_ecef_m.1 - base_ecef_m.1).powi(2)
+            + (rover_ecef_m.2 - base_ecef_m.2).powi(2))
+        .sqrt();
+        description.push((
+            "Baseline".to_string(),
+            format!("{:.3} km (reference positions)", length_m / 1.0E3),
+        ));
+    }
+
     if let Some((x, y, z)) = cfg.apriori_ecef_m {
         description.push((
             "A priori".to_string(),
@@ -235,8 +318,57 @@ pub fn configure(
         NavigationSetup {
             rover: rover.to_string(),
             base: base.as_ref().map(QcIndexing::to_string),
+            base_ecef_m,
             reference_ecef_m,
             description,
         },
     ))
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use gnss_qc::prelude::TimeScale;
+
+    #[test]
+    fn partial_configurations() {
+        let defaults = QcNavigationConfig::default().with_method(Method::CPP);
+
+        // empty configuration: defaults
+        let cfg = partial_configuration(&defaults, "{}").unwrap();
+        assert_eq!(cfg.technique, QcNavigationTechnique::Absolute);
+        assert_eq!(cfg.solver.method, Method::CPP);
+
+        // nested field only: the rest of the solver configuration is preserved
+        let cfg = partial_configuration(
+            &defaults,
+            r#"{ "solver": { "method": "PPP", "timescale": "GST" } }"#,
+        )
+        .unwrap();
+        assert_eq!(cfg.solver.method, Method::PPP);
+        assert_eq!(cfg.solver.timescale, TimeScale::GST);
+        assert_eq!(cfg.solver.min_sv_elev, defaults.solver.min_sv_elev);
+        assert_eq!(cfg.constellations, defaults.constellations);
+
+        // RTK technique
+        let cfg = partial_configuration(
+            &defaults,
+            r#"{ "technique": { "Rtk": { "base": { "Custom": "MOJN" }, "position_ecef_m": null } } }"#,
+        )
+        .unwrap();
+        assert!(matches!(cfg.technique, QcNavigationTechnique::Rtk { .. }));
+    }
+
+    #[test]
+    fn example_configurations() {
+        let defaults = QcNavigationConfig::default();
+        for entry in std::fs::read_dir("examples/CONFIG").unwrap() {
+            let path = entry.unwrap().path();
+            if path.extension().map(|ext| ext == "json").unwrap_or(false) {
+                let content = std::fs::read_to_string(&path).unwrap();
+                partial_configuration(&defaults, &content)
+                    .unwrap_or_else(|e| panic!("{}: {}", path.display(), e));
+            }
+        }
+    }
 }

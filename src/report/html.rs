@@ -86,8 +86,9 @@ fn chart_json(chart: &Chart) -> Value {
                     "name": series.name,
                     "lon": series.x,
                     "lat": series.y,
-                    "mode": "markers",
-                    "marker": {"size": 5},
+                    "mode": if series.connected { "lines+markers" } else { "markers" },
+                    "marker": {"size": if series.connected { 9 } else { 5 }},
+                    "line": {"width": 3},
                 }),
                 _ => {
                     // lines are interrupted over data gaps
@@ -104,7 +105,9 @@ fn chart_json(chart: &Chart) -> Value {
                             .collect(),
                         XAxis::Linear => json!(xs),
                     };
-                    let mode = if chart.kind == ChartKind::Lines {
+                    let mode = if series.connected {
+                        "lines+markers"
+                    } else if chart.kind == ChartKind::Lines {
                         "lines"
                     } else {
                         "markers"

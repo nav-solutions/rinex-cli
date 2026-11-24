@@ -2,7 +2,7 @@
 use std::collections::BTreeMap;
 
 use gnss_qc::{
-    geodesy::ecef_to_enu_vector,
+    geodesy::{ecef_to_enu_vector, ecef_to_geodetic},
     prelude::{Epoch, QcNavigationReport, QcOutput, QcOutputItem},
 };
 
@@ -28,10 +28,15 @@ struct Solution {
     satellites: usize,
 }
 
+/// ECEF coordinates (m)
+type Ecef = (f64, f64, f64);
+
 pub struct NavigationAnalysis {
     /// Reference position of the rover
     reference_ecef_m: Option<(f64, f64, f64)>,
     rover: Option<String>,
+    /// RTK base: identity and position
+    base: Option<(String, Option<Ecef>)>,
     solutions: BTreeMap<String, Vec<Solution>>,
     reports: BTreeMap<String, QcNavigationReport>,
 }
@@ -44,6 +49,11 @@ impl NavigationAnalysis {
                 .as_ref()
                 .and_then(|nav| nav.reference_ecef_m),
             rover: context.navigation.as_ref().map(|nav| nav.rover.clone()),
+            base: context.navigation.as_ref().and_then(|nav| {
+                nav.base
+                    .as_ref()
+                    .map(|base| (base.clone(), nav.base_ecef_m))
+            }),
             solutions: BTreeMap::new(),
             reports: BTreeMap::new(),
         }
@@ -85,6 +95,146 @@ impl ErrorStats {
             fmt(self.horizontal.max, 3),
             fmt(self.up.max_abs(), 3),
         ]
+    }
+}
+
+fn sub3(a: (f64, f64, f64), b: (f64, f64, f64)) -> (f64, f64, f64) {
+    (a.0 - b.0, a.1 - b.1, a.2 - b.2)
+}
+
+fn norm3(a: (f64, f64, f64)) -> f64 {
+    (a.0 * a.0 + a.1 * a.1 + a.2 * a.2).sqrt()
+}
+
+fn degrees(ecef_m: (f64, f64, f64)) -> (f64, f64, f64) {
+    let (lat, long, alt) = ecef_to_geodetic(ecef_m);
+    (lat.to_degrees(), long.to_degrees(), alt)
+}
+
+/// RTK baseline: base → rover vector (local frame of the base), estimated and reference
+fn baseline_section(
+    section: &mut Section,
+    origin: Epoch,
+    base: &str,
+    base_ecef_m: (f64, f64, f64),
+    reference_ecef_m: Option<(f64, f64, f64)>,
+    rover: &str,
+    solutions: &[Solution],
+) {
+    let half = solutions.len() / 2;
+    let estimated = mean_position(&solutions[half..]);
+
+    let estimated_enu = ecef_to_enu_vector(base_ecef_m, sub3(estimated, base_ecef_m));
+    let estimated_length = norm3(sub3(estimated, base_ecef_m));
+
+    let (base_lat, base_long, base_alt) = degrees(base_ecef_m);
+
+    section.push(Block::Heading("RTK baseline".to_string()));
+    section.push(Block::Text(
+        "Differential navigation: the rover is positioned relative to the base, whose coordinates are fixed. The baseline is the base → rover vector, expressed in the local frame (east, north, up) of the base.".to_string(),
+    ));
+
+    let mut items = vec![
+        ("Base".to_string(), base.to_string()),
+        (
+            "Base position".to_string(),
+            format!(
+                "ECEF {:.3} {:.3} {:.3} m — {:.6}°, {:.6}°, {:.3} m",
+                base_ecef_m.0, base_ecef_m.1, base_ecef_m.2, base_lat, base_long, base_alt
+            ),
+        ),
+        (
+            "Estimated baseline (last 50 %)".to_string(),
+            format!(
+                "{:.3} m — east {:.3} m, north {:.3} m, up {:.3} m",
+                estimated_length, estimated_enu.0, estimated_enu.1, estimated_enu.2
+            ),
+        ),
+    ];
+
+    if let Some(reference) = reference_ecef_m {
+        let reference_enu = ecef_to_enu_vector(base_ecef_m, sub3(reference, base_ecef_m));
+        let reference_length = norm3(sub3(reference, base_ecef_m));
+        let error = sub3(estimated_enu, reference_enu);
+
+        items.push((
+            "Reference baseline".to_string(),
+            format!(
+                "{:.3} m — east {:.3} m, north {:.3} m, up {:.3} m",
+                reference_length, reference_enu.0, reference_enu.1, reference_enu.2
+            ),
+        ));
+        items.push((
+            "Baseline error (last 50 %)".to_string(),
+            format!(
+                "length {:+.3} m — east {:+.3} m, north {:+.3} m, up {:+.3} m ({:.1} ppm)",
+                estimated_length - reference_length,
+                error.0,
+                error.1,
+                error.2,
+                1.0E6 * norm3(error) / reference_length.max(1.0)
+            ),
+        ));
+    }
+
+    section.push(Block::KeyValue(items));
+
+    // map: base, rover, baseline
+    let mut chart =
+        Chart::xy("RTK baseline", "Longitude (°)", "Latitude (°)").with_kind(ChartKind::Map);
+
+    let rover_geo = degrees(estimated);
+
+    let mut baseline = Series::new("baseline").connected();
+    baseline.push(base_long, base_lat);
+    baseline.push(rover_geo.1, rover_geo.0);
+    chart.push(baseline);
+
+    let mut base_point = Series::new(&format!("base: {}", base));
+    base_point.push(base_long, base_lat);
+    chart.push(base_point);
+
+    let mut track = Series::new(&format!("rover: {}", rover));
+    for s in solutions.iter() {
+        track.push(s.lat_long_alt.1, s.lat_long_alt.0);
+    }
+    chart.push(track);
+    section.push(Block::Chart(chart));
+
+    // local frame of the base (km)
+    let mut chart = Chart::xy(
+        "RTK baseline, local frame of the base",
+        "East (km)",
+        "North (km)",
+    )
+    .with_equal_axes();
+
+    let mut baseline = Series::new("baseline").connected();
+    baseline.push(0.0, 0.0);
+    baseline.push(estimated_enu.0 / 1.0E3, estimated_enu.1 / 1.0E3);
+    chart.push(baseline);
+
+    let mut rover_points = Series::new("rover solutions");
+    for s in solutions.iter() {
+        let enu = ecef_to_enu_vector(base_ecef_m, sub3(s.pos_m, base_ecef_m));
+        rover_points.push(enu.0 / 1.0E3, enu.1 / 1.0E3);
+    }
+    chart.push(rover_points);
+    section.push(Block::Chart(chart));
+
+    // baseline length over time
+    if let Some(reference) = reference_ecef_m {
+        let reference_length = norm3(sub3(reference, base_ecef_m));
+        let mut chart = Chart::time("Baseline length error (estimated − reference)", "m", origin);
+        let mut series = Series::new("length error");
+        for s in solutions.iter() {
+            series.push(
+                elapsed_s(origin, s.epoch),
+                norm3(sub3(s.pos_m, base_ecef_m)) - reference_length,
+            );
+        }
+        chart.push(series);
+        section.push(Block::Chart(chart));
     }
 }
 
@@ -167,6 +317,15 @@ impl Analysis for NavigationAnalysis {
                         format!(
                             "{} precise, {} broadcast",
                             report.precise_orbits, report.broadcast_orbits
+                        ),
+                    ),
+                    (
+                        "Satellite clock states".to_string(),
+                        format!(
+                            "{} clock products, {} precise products, {} broadcast",
+                            report.precise_clocks,
+                            report.precise_state_clocks,
+                            report.broadcast_clocks
                         ),
                     ),
                 ]));
@@ -299,13 +458,30 @@ impl Analysis for NavigationAnalysis {
             chart.push(track);
             section.push(Block::Chart(chart));
 
-            let mut chart = Chart::time("Receiver clock offset", "µs", origin);
-            let mut clock = Series::new("clock offset");
-            for s in solutions.iter() {
-                clock.push(elapsed_s(origin, s.epoch), s.clock_offset_s * 1.0E6);
+            if let (true, Some((base, Some(base_ecef_m)))) = (is_rover, &self.base) {
+                baseline_section(
+                    &mut section,
+                    origin,
+                    base,
+                    *base_ecef_m,
+                    self.reference_ecef_m,
+                    receiver,
+                    solutions,
+                );
             }
-            chart.push(clock);
-            section.push(Block::Chart(chart));
+
+            // differential navigation: no receiver clock
+            let rtk = is_rover && self.base.is_some();
+
+            if !rtk {
+                let mut chart = Chart::time("Receiver clock offset", "µs", origin);
+                let mut clock = Series::new("clock offset");
+                for s in solutions.iter() {
+                    clock.push(elapsed_s(origin, s.epoch), s.clock_offset_s * 1.0E6);
+                }
+                chart.push(clock);
+                section.push(Block::Chart(chart));
+            }
 
             let mut chart = Chart::time("Dilution of precision", "DOP", origin);
             let mut dops = [
