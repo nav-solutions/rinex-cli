@@ -7,9 +7,9 @@ use log::{info, warn};
 use gnss_qc::prelude::{
     Duration, Epoch, QcClockAlignment, QcClockProduct, QcClockResidualConfig,
     QcClockResidualProcessor, QcEngine, QcEngineBuilder, QcEphemerisCoverageProcessor,
-    QcMeteoConfig, QcMeteoProcessor, QcObservationResidualConfig, QcObservationResidualProcessor,
-    QcOrbitProduct, QcOrbitResidualConfig, QcOrbitResidualProcessor, QcOutput, QcOutputItem,
-    QcPoll, QcSignalProcessor,
+    QcEphemerisProcessor, QcMeteoConfig, QcMeteoProcessor, QcObservationResidualConfig,
+    QcObservationResidualProcessor, QcOrbitProduct, QcOrbitResidualConfig,
+    QcOrbitResidualProcessor, QcOutput, QcOutputItem, QcPoll, QcSignalProcessor,
 };
 
 use crate::{
@@ -175,6 +175,8 @@ pub fn plan(cli: &Cli, mut inputs: Inputs, workspace: &Workspace) -> Result<Plan
                 if has_nav {
                     builder = builder.with_processor(QcEphemerisCoverageProcessor::default());
                     setup.push(("Ephemeris coverage".to_string(), "yes".to_string()));
+                    // broadcast ephemerides, for the sky plots
+                    builder = builder.with_processor(QcEphemerisProcessor::default());
                 } else {
                     warn!("no navigation RINEX: ephemeris coverage is not analyzed");
                 }
