@@ -185,5 +185,5 @@ our countless discussions. Check out his
 
 ## Licensing
 
-This application is part of the [RTK-rs framework](https://github.com/rtk-rs) which
-is delivered under the [Mozilla V2 Public](https://www.mozilla.org/en-US/MPL/2.0) license.
+This application is part of the [NAV-Solutions framework](https://github.com/nav-solutions) 
+and is licensed under [Mozilla V2 Public](https://www.mozilla.org/en-US/MPL/2.0) license.
