@@ -487,6 +487,7 @@ fn heatmap_json(heatmap: &Heatmap) -> Value {
         "colorscale": "Viridis",
         "colorbar": {"title": {"text": heatmap.z_label}},
         "hovertemplate": "%{x}°, %{y}°: %{z:.1f}<extra></extra>",
+        "opacity": if heatmap.geographic { 0.75 } else { 1.0 },
     });
 
     let steps = heatmap
@@ -507,6 +508,46 @@ fn heatmap_json(heatmap: &Heatmap) -> Value {
         "xaxis": {"title": {"text": heatmap.x_label}},
         "yaxis": {"title": {"text": heatmap.y_label}, "scaleanchor": "x", "scaleratio": 1},
     });
+
+    // geographic grid: world map behind the colors, coast lines above
+    if heatmap.geographic {
+        let (fill, coast) = crate::report::geo::land_paths(|lon, lat| (lon, lat));
+        layout["plot_bgcolor"] = json!("#cfe3f3");
+        layout["shapes"] = json!([
+            {
+                "type": "path",
+                "path": fill,
+                "xref": "x",
+                "yref": "y",
+                "layer": "below",
+                "fillcolor": "#e3e7d3",
+                "line": {"width": 0},
+            },
+            {
+                "type": "path",
+                "path": coast,
+                "xref": "x",
+                "yref": "y",
+                "layer": "above",
+                "line": {"color": "rgba(29, 39, 51, 0.75)", "width": 1},
+            },
+        ]);
+        // the cells are centered on the grid nodes
+        let range = |v: &[f64], limit: f64| match (v.first(), v.last()) {
+            (Some(first), Some(last)) if v.len() > 1 => {
+                let half = (last - first) / (v.len() - 1) as f64 / 2.0;
+                json!([(first - half).max(-limit), (last + half).min(limit)])
+            },
+            _ => Value::Null,
+        };
+        layout["xaxis"]["range"] = range(&heatmap.x, 180.0);
+        layout["yaxis"]["range"] = range(&heatmap.y, 90.0);
+        // equal scales: the frame shrinks, not the extent
+        layout["xaxis"]["constrain"] = json!("domain");
+        layout["yaxis"]["constrain"] = json!("domain");
+        layout["xaxis"]["showgrid"] = json!(false);
+        layout["yaxis"]["showgrid"] = json!(false);
+    }
 
     if heatmap.frames.len() > 1 {
         layout["sliders"] = json!([{

@@ -94,7 +94,7 @@ rinex-cli -f data/IONEX/V1/CKMG0090.21I.gz tec --resample "30 min"
 | Summary | maps (product, interpolated), interval, grid, layer altitude |
 | Regions | mean TEC, dispersion, minimum, maximum (location and epoch) per region |
 | Time series | mean and maximal TEC per region; global mean, maps of the product and interpolated maps; location of the maximal TEC |
-| Maps | color maps of the vertical TEC: every map in the HTML report (slider), one map out of N in the PDF report |
+| Maps | color maps of the vertical TEC over the world map (land masses, coast lines: Natural Earth 1:110m, embedded): every map in the HTML report (slider), one map out of N in the PDF report |
 | Global statistics | map after map |
 
 ## Notes

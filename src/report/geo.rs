@@ -1,4 +1,4 @@
-//! Geography for the static (PDF) maps: land masses and projections.
+//! Geography for the maps: land masses and projections.
 //!
 //! Land masses: Natural Earth 1:110m land polygons (public domain,
 //! <https://www.naturalearthdata.com>), outer rings, coordinates rounded to 0.01°.
@@ -26,7 +26,33 @@ pub fn land() -> &'static [Vec<(f64, f64)>] {
     })
 }
 
+/// Land masses as SVG paths, in an equirectangular frame: `project` maps
+/// (longitude, latitude) to the drawing coordinates.
+/// Returns (fill: closed rings, coast: outlines without the antimeridian cuts).
+pub fn land_paths(project: impl Fn(f64, f64) -> (f64, f64)) -> (String, String) {
+    use std::fmt::Write;
+    let on_antimeridian = |lon: f64| lon.abs() >= 179.99;
+    let (mut fill, mut coast) = (String::new(), String::new());
+    for ring in land() {
+        for (k, (lon, lat)) in ring.iter().enumerate() {
+            let (x, y) = project(*lon, *lat);
+            let _ = write!(fill, "{}{:.2},{:.2}", if k == 0 { 'M' } else { 'L' }, x, y);
+        }
+        fill.push('Z');
+        let mut previous: Option<f64> = None;
+        for (lon, lat) in ring.iter().chain(ring.first()) {
+            let cut = previous.is_some_and(|prev| on_antimeridian(prev) && on_antimeridian(*lon));
+            let (x, y) = project(*lon, *lat);
+            let pen = previous.is_some() && !cut;
+            let _ = write!(coast, "{}{:.2},{:.2}", if pen { 'L' } else { 'M' }, x, y);
+            previous = Some(*lon);
+        }
+    }
+    (fill, coast)
+}
+
 /// Orthographic projection centered on (lon0, lat0), degrees.
+#[cfg_attr(not(feature = "pdf"), allow(dead_code))]
 /// Returns (x, y) on the unit disk and whether the point faces the viewer.
 pub fn orthographic(lon0: f64, lat0: f64, lon: f64, lat: f64) -> (f64, f64, bool) {
     let (l0, p0, l, p) = (
@@ -44,6 +70,7 @@ pub fn orthographic(lon0: f64, lat0: f64, lon: f64, lat: f64) -> (f64, f64, bool
 /// Local plan around (lon0, lat0): east and north offsets (m) of (lon, lat),
 /// azimuthal equidistant projection on the mean sphere (local and regional maps,
 /// valid at the poles). Points behind the horizon are meaningless, see [orthographic].
+#[cfg_attr(not(feature = "pdf"), allow(dead_code))]
 pub fn local_plan(lon0: f64, lat0: f64, lon: f64, lat: f64) -> (f64, f64) {
     const EARTH_RADIUS_M: f64 = 6_371_008.8;
     let (l0, p0, l, p) = (

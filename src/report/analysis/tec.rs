@@ -303,6 +303,7 @@ impl Analysis for TecAnalysis {
 
                 section.push(Block::Heatmap(Heatmap {
                     title: format!("Vertical TEC: {}", source),
+                    geographic: true,
                     x_label: "Longitude (°)".to_string(),
                     y_label: "Latitude (°)".to_string(),
                     z_label: "TECu".to_string(),

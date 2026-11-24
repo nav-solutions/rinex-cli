@@ -452,6 +452,9 @@ fn viridis(t: f64) -> String {
 }
 
 /// Renders one frame of a heatmap as SVG (color scale shared by all frames)
+/// Opacity of the colors of a geographic heatmap, over the world map
+const GEOGRAPHIC_OPACITY: f64 = 0.75;
+
 pub fn render_heatmap(heatmap: &Heatmap, frame: &HeatmapFrame) -> String {
     const COLORBAR: f64 = 70.0;
 
@@ -501,6 +504,21 @@ pub fn render_heatmap(heatmap: &Heatmap, frame: &HeatmapFrame) -> String {
         f = FONT
     );
 
+    // geographic grid: world map behind the colors
+    if heatmap.geographic {
+        let (fill, _) = crate::report::geo::land_paths(|lon, lat| (px(lon), py(lat)));
+        let _ = write!(
+            svg,
+            r##"<clipPath id="heatmap"><rect x="{l}" y="{t}" width="{w}" height="{h}"/></clipPath><rect x="{l}" y="{t}" width="{w}" height="{h}" fill="#cfe3f3"/><path d="{fill}" fill="#e3e7d3" stroke="none" clip-path="url(#heatmap)"/><g opacity="{o}">"##,
+            l = MARGIN_LEFT,
+            t = MARGIN_TOP,
+            w = plot_w,
+            h = plot_h,
+            fill = fill,
+            o = GEOGRAPHIC_OPACITY
+        );
+    }
+
     // cells
     for (j, row) in frame.z.iter().enumerate().take(ny) {
         for (i, value) in row.iter().enumerate().take(nx) {
@@ -518,6 +536,16 @@ pub fn render_heatmap(heatmap: &Heatmap, frame: &HeatmapFrame) -> String {
                 viridis((value - zmin) / span)
             );
         }
+    }
+
+    // geographic grid: coast lines above the colors
+    if heatmap.geographic {
+        let (_, coast) = crate::report::geo::land_paths(|lon, lat| (px(lon), py(lat)));
+        let _ = write!(
+            svg,
+            r##"</g><path d="{}" fill="none" stroke="#1d2733" stroke-opacity="0.75" stroke-width="0.7" stroke-linejoin="round" clip-path="url(#heatmap)"/>"##,
+            coast
+        );
     }
 
     // frame and graticule (every 30°)
@@ -571,6 +599,16 @@ pub fn render_heatmap(heatmap: &Heatmap, frame: &HeatmapFrame) -> String {
 
     // color bar
     let (bx, bw) = (MARGIN_LEFT + plot_w + 18.0, 12.0);
+    // same opacity as the colors (one group: no seams between the steps)
+    let _ = write!(
+        svg,
+        r#"<g opacity="{}">"#,
+        if heatmap.geographic {
+            GEOGRAPHIC_OPACITY
+        } else {
+            1.0
+        }
+    );
     let steps = 64;
     for k in 0..steps {
         let t = k as f64 / (steps - 1) as f64;
@@ -585,6 +623,8 @@ pub fn render_heatmap(heatmap: &Heatmap, frame: &HeatmapFrame) -> String {
             viridis(t)
         );
     }
+
+    svg.push_str("</g>");
 
     let bar_ticks = ticks(zmin, zmax, 5);
     let bar_step = if bar_ticks.len() > 1 {

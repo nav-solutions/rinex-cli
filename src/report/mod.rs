@@ -5,7 +5,6 @@
 //! end of the session. Renderers then format the report: HTML (interactive),
 //! PDF (static, pdf feature).
 pub mod analysis;
-#[cfg(feature = "pdf")]
 pub mod geo;
 mod html;
 pub mod sky;
@@ -103,6 +102,9 @@ pub struct HeatmapFrame {
 #[derive(Debug, Clone)]
 pub struct Heatmap {
     pub title: String,
+    /// Geographic grid (x: longitude, y: latitude, degrees): the world map
+    /// (land masses, coast lines) is drawn behind the colors
+    pub geographic: bool,
     pub x_label: String,
     pub y_label: String,
     pub z_label: String,
