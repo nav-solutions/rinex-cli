@@ -20,9 +20,12 @@ and presents the results as data files and reports.
                        aliases)      navigation..)                  └─► report.html, report.pdf
 ```
 
-- Quality control: sampling, data gaps, signal strength, lock losses, ephemeris coverage
+- Quality control: sampling, data gaps, signal strength, lock losses, ephemeris coverage,
+  sky plot and satellite visibility timeline
 - Post processed navigation: SPP, CPP, PPP (`navigation` feature)
 - RTK (differential) navigation: RTK-SPP, RTK-CPP, RTK-PPP, with the baseline in the report
+- Navigation reports: trajectory map (OpenStreetMap in HTML, local plan in PDF), world map,
+  sky plot and visibility timeline of the satellites used
 - CGGTTS solutions: common view time transfer (`cggtts` feature)
 - Residual analysis: receiver A − receiver B, orbital product A − product B,
   clock product A − product B (two analysis centers)
@@ -112,6 +115,11 @@ rinex-cli -f rap=RAP.SP3 -f fin=FIN.SP3 residuals orbit --lhs sp3:rap --rhs sp3:
 rinex-cli --sp3-index filename -f FIN.SP3 -f RAP.SP3 index
 ```
 
+Low cost receivers time tag their observations a few milliseconds off the second: `--snap-epochs`
+moves the epochs to the nearest second (and corrects the observations), `--align-sampling 30s` keeps
+the epochs of a 30 s reference station. Both are required to combine such a receiver with a reference
+station (RTK), see [Preprocessor](documentation/Preprocessor.md#aligning-epochs-low-cost-receivers).
+
 Products are designated by their identity, as printed by `index`
 (`--rover "receiver:SEPT POLARX5 #3047937"`, `--lhs agency:GRGS`), or by name when unique.
 
@@ -132,7 +140,8 @@ Preprocessing (`-G -R -E -C -J -I -S --CG`, `-P FILTER`, `-z`) applies to each f
 
 The HTML report is a single interactive page (plotly.js is loaded from its CDN). The PDF report
 is static: it is meant to be archived, printed or delivered. Both are built from the same report
-model. The JSON lines deserialize into `gnss_qc::prelude::QcOutputItem` (serde feature).
+model. The HTML maps load their tiles from OpenStreetMap and need a network access;
+the PDF maps are self contained. The JSON lines deserialize into `gnss_qc::prelude::QcOutputItem` (serde feature).
 
 ## Commands
 

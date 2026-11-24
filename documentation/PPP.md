@@ -62,7 +62,7 @@ Options
 | `--profile`, `--static` | User profile (dynamics of the navigation filter): static, pedestrian (default), car, airplane, rocket |
 | `--clock` | Receiver clock profile: quartz (default), oscillator, atomic, hydrogen-maser |
 | `--apriori x,y,z\|header` | A priori position. Default: none, the solver surveys from scratch |
-| `--reference x,y,z` | Reference position to express the errors. Default: the RINEX header of the rover |
+| `--reference x,y,z` | Reference position to express the errors. Default: the RINEX header of the rover, except for a moving rover (`--profile` other than static): its solutions are then presented as displacements relative to the first solution |
 | `--base PRODUCT`, `--base-position x,y,z` | RTK navigation, see [RTK](./RTK.md) |
 | `--cfg nav.json` | Navigation configuration (GNSS-Qc `QcNavigationConfig`), may be partial, see [examples/CONFIG](../examples/CONFIG) |
 | `--anise-dir DIR` | ANISE dataset (`GNSS_QC_ANISE_DIR`) |
@@ -76,8 +76,16 @@ Outputs
 =======
 
 - `data/solutions.csv`: one solution per epoch (ECEF and geodetic position, velocity, clock offset, DOPs, satellites)
-- report: errors with respect to the reference position (east, north, up), trajectory, receiver clock,
-DOPs, satellites, and the RTK baseline in RTK
+- report: errors with respect to the reference position (east, north, up), or displacements for a moving
+rover (with the distance travelled, speed and altitude range), receiver clock, DOPs, satellites, and:
+  - a **map** of the trajectory, colored by the time elapsed (HTML: OpenStreetMap tiles, zoomed on the
+  solutions and the RTK base; PDF: local plan in meters, north up, with a scale bar), and a **world
+  map** (orthographic globe) locating the session
+  - a **sky plot**: polar projection (azimuth, elevation) of the satellites used by the solver, north up,
+  zenith at the center, colored by constellation (hue) then satellite (shade)
+  - a **visibility timeline**: one row per satellite, segments where it is used by the solver
+  - the RTK baseline in RTK
+- `summary.json`: navigation context and end of session statistics
 - `summary.json`: navigation context and end of session statistics
 
 Examples

@@ -150,3 +150,25 @@ rinex-cli -q \
     -P "decim:2" \
     --fp data/ESBC00DNK_R_20201770000_01D_30S_MO.crx.gz
 ```
+
+# Aligning epochs (low cost receivers)
+
+Decimation counts from the first epoch of each file, and keeps the time tags as they are.
+Receivers that time tag their observations a few milliseconds off the second (u-blox: 08:17:50.989)
+never share an epoch with a reference station (08:18:00.000), which prevents RTK and any
+combination of receivers. Two global options fix this, for observation RINEX only:
+
+- `--snap-epochs` moves each epoch to the nearest second and corrects the observations accordingly
+(pseudo ranges C + c·Δt, phase ranges L + f·Δt), as a receiver clock jump would. The transmission
+times, hence the geometry, are unchanged.
+- `--align-sampling PERIOD` keeps only the epochs that are multiples of `PERIOD`, counted from the GPS
+time origin, so that every file keeps the same instants (`30s`, `"30 s"`, `30`, `"0.5 min"`).
+
+```bash
+rinex-cli \
+    -f rover=data/OBS/V3/2024_09_20_10_17_06.obs.gz \
+    -f NYA2=data/CRNX/V3/NYA200NOR_R_20242640000_01D_30S_MO.crx.gz \
+    --snap-epochs --align-sampling 30s
+```
+
+See [RTK](./RTK.md#aligning-the-rover-epochs).

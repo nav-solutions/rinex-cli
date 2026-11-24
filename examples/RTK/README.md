@@ -68,3 +68,22 @@ cannot be assessed below 2 dm: use survey grade coordinates (`--base-position`, 
 to go further.
 - 65 km is a *long* baseline for RTK: ambiguity resolution is not attempted (float solution,
 ambiguities rounded), real-time "fixed" centimetric RTK is out of reach on such a baseline.
+
+Pedestrian rover (NYA2, 2024-09-20)
+===================================
+
+A walk around Ny-Ålesund, recorded by a u-blox receiver (1 Hz), relative to NYA2 (Septentrio, 30 s),
+6 to 8.5 km baseline, broadcast ephemerides. See the [RTK documentation](../../documentation/RTK.md#example-pedestrian-nya2-6-to-85-km)
+for the results.
+
+| Script | Technique |
+|--------|-----------|
+| [pedestrian_rtk_spp.sh](./pedestrian_rtk_spp.sh) | RTK-SPP: L1 C/A code |
+| [pedestrian_rtk_cpp.sh](./pedestrian_rtk_cpp.sh) | RTK-CPP: L1/L2C code (iono free) |
+| [pedestrian_rtk_ppp.sh](./pedestrian_rtk_ppp.sh) | RTK-PPP: L1/L2C phase (iono free) |
+
+The rover epochs are aligned on those of the base: `--snap-epochs --align-sampling 30s`.
+Each script writes `WORKSPACE/rtk_<method>_pedestrian_NYA2/`: the report presents the trajectory on a map
+(colored by time, with the base and the baseline), a world map, the displacements, the baseline length
+over time, the sky plot and the visibility timeline of the satellites used. `data/rover.gpx` and
+`data/rover.kml` open in any mapping application.
