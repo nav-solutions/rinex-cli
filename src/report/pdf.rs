@@ -8,7 +8,7 @@ use typst_layout::PagedDocument;
 
 use crate::{
     error::Error,
-    report::{svg, Block, Report},
+    report::{svg, Block, ChartKind, Report},
 };
 
 /// Typst string literal
@@ -172,8 +172,39 @@ pub fn render(report: &Report) -> Result<Vec<u8>, Error> {
                         );
                     }
                 },
+                Block::Skyplot(skyplot) => {
+                    let name = format!("figure-{}.svg", figures.len());
+                    figures.push((name.clone(), svg::render_skyplot(skyplot).into_bytes()));
+                    let _ = writeln!(
+                        doc,
+                        "#figure(image({}, width: 78%), caption: {})",
+                        s(&name),
+                        s(&skyplot.title)
+                    );
+                },
+                Block::Timeline(timeline) => {
+                    let name = format!("figure-{}.svg", figures.len());
+                    figures.push((name.clone(), svg::render_timeline(timeline).into_bytes()));
+                    let _ = writeln!(
+                        doc,
+                        "#figure(image({}, width: 100%), caption: {})",
+                        s(&name),
+                        s(&timeline.title)
+                    );
+                },
                 Block::Chart(chart) => {
                     if chart.is_empty() {
+                        continue;
+                    }
+                    if chart.kind == ChartKind::Globe {
+                        let name = format!("figure-{}.svg", figures.len());
+                        figures.push((name.clone(), svg::render(chart).into_bytes()));
+                        let _ = writeln!(
+                            doc,
+                            "#figure(image({}, width: 45%), caption: {})",
+                            s(&name),
+                            s(&chart.title)
+                        );
                         continue;
                     }
                     let name = format!("figure-{}.svg", figures.len());

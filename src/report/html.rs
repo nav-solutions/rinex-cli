@@ -2,7 +2,10 @@
 use maud::{html, Markup, PreEscaped, DOCTYPE};
 use serde_json::{json, Value};
 
-use crate::report::{time_tag, Block, Chart, ChartKind, Heatmap, HeatmapFrame, Report, XAxis};
+use crate::report::{
+    sky::{Skyplot, Timeline},
+    time_tag, Block, Chart, ChartKind, Heatmap, HeatmapFrame, Report, XAxis,
+};
 
 /// Maximal number of points per series
 const MAX_POINTS: usize = 2000;
@@ -31,7 +34,9 @@ th { background:var(--bg); font-weight:600; position:sticky; top:0; }
 table.kv th { width:220px; position:static; }
 .notice { background:var(--warnbg); color:var(--warn); padding:8px 12px; border-radius:6px; margin:8px 0; }
 .chart { width:100%; height:440px; margin:8px 0; }
-.chart.map { height:520px; }
+.chart.map { height:560px; }
+.chart.globe { height:420px; max-width:520px; }
+.chart.skyplot { height:640px; max-width:820px; }
 .chart.heatmap { height:620px; }
 footer { color:var(--muted); padding:16px 32px; }
 @media print { nav { display:none; } .table-wrap { max-height:none; overflow:visible; } }
@@ -73,6 +78,180 @@ fn break_gaps(x: &[f64], y: &[f64]) -> (Vec<f64>, Vec<f64>) {
     (xs, ys)
 }
 
+/// Extent of the points of a map: (lon min, lon max, lat min, lat max)
+fn extent(chart: &Chart) -> (f64, f64, f64, f64) {
+    let (mut lon_min, mut lon_max, mut lat_min, mut lat_max) =
+        (f64::MAX, f64::MIN, f64::MAX, f64::MIN);
+    for series in chart.series.iter() {
+        for (lon, lat) in series.x.iter().zip(series.y.iter()) {
+            if lon.is_finite() && lat.is_finite() {
+                lon_min = lon_min.min(*lon);
+                lon_max = lon_max.max(*lon);
+                lat_min = lat_min.min(*lat);
+                lat_max = lat_max.max(*lat);
+            }
+        }
+    }
+    if lon_min > lon_max {
+        return (0.0, 0.0, 0.0, 0.0);
+    }
+    (lon_min, lon_max, lat_min, lat_max)
+}
+
+/// Web Mercator zoom level (MapLibre: 512 px tiles) fitting this extent in the map frame
+/// (≈ 760 × 480 px, color bar and legend excluded)
+fn map_zoom(lon_min: f64, lon_max: f64, lat_min: f64, lat_max: f64) -> f64 {
+    const WIDTH_PX: f64 = 760.0;
+    const HEIGHT_PX: f64 = 480.0;
+    let mercator = |lat: f64| {
+        let lat = lat.clamp(-85.0, 85.0).to_radians();
+        (std::f64::consts::FRAC_PI_4 + lat / 2.0).tan().ln()
+    };
+    let dlon = (lon_max - lon_min).max(1.0E-6);
+    let dy = (mercator(lat_max) - mercator(lat_min)).max(1.0E-8);
+    let zoom_lon = (360.0 * WIDTH_PX / 512.0 / dlon).log2();
+    let zoom_lat = (2.0 * std::f64::consts::PI * HEIGHT_PX / 512.0 / dy).log2();
+    // margin around the points
+    (zoom_lon.min(zoom_lat) - 0.6).clamp(0.5, 18.0)
+}
+
+/// Sky plot: polar projection, north up, azimuth clockwise, zenith at the center
+fn skyplot_json(skyplot: &Skyplot) -> Value {
+    let mut traces = Vec::new();
+    let mut groups = std::collections::BTreeSet::new();
+
+    for track in skyplot.tracks.iter() {
+        let (mut r, mut theta, mut text) = (Vec::new(), Vec::new(), Vec::new());
+        let mut previous: Option<f64> = None;
+        for (t, az, el) in track.points.iter() {
+            if previous.is_some_and(|p| t - p > skyplot.gap_s) {
+                r.push(Value::Null);
+                theta.push(Value::Null);
+                text.push(Value::Null);
+            }
+            r.push(json!(90.0 - el));
+            theta.push(json!(az));
+            text.push(json!(time_tag(skyplot.origin, *t)));
+            previous = Some(*t);
+        }
+
+        let first_of_group = groups.insert(track.group.clone());
+
+        traces.push(json!({
+            "type": "scatterpolar",
+            "name": track.label,
+            "legendgroup": track.group,
+            "legendgrouptitle": if first_of_group { json!({"text": track.group}) } else { Value::Null },
+            "r": r,
+            "theta": theta,
+            "text": text,
+            "mode": "lines",
+            "line": {"color": track.color, "width": 2},
+            "hovertemplate": format!("{} %{{text}}<br>azimuth %{{theta:.1f}}°, elevation %{{customdata:.1f}}°<extra></extra>", track.label),
+            "customdata": track.points.iter().map(|(_, _, el)| json!(el)).collect::<Vec<_>>(),
+        }));
+
+        // label at the end of the track
+        if let Some((_, az, el)) = track.points.last() {
+            traces.push(json!({
+                "type": "scatterpolar",
+                "r": [90.0 - el],
+                "theta": [az],
+                "mode": "markers+text",
+                "text": [track.label],
+                "textposition": "top center",
+                "textfont": {"size": 10, "color": track.color},
+                "marker": {"size": 6, "color": track.color},
+                "legendgroup": track.group,
+                "showlegend": false,
+                "hoverinfo": "skip",
+            }));
+        }
+    }
+
+    let layout = json!({
+        "title": {"text": skyplot.title, "font": {"size": 15}},
+        "margin": {"l": 40, "r": 40, "t": 60, "b": 30},
+        "legend": {"groupclick": "toggleitem"},
+        "polar": {
+            "angularaxis": {
+                "rotation": 90,
+                "direction": "clockwise",
+                "tickmode": "array",
+                "tickvals": [0, 45, 90, 135, 180, 225, 270, 315],
+                "ticktext": ["N", "NE", "E", "SE", "S", "SW", "W", "NW"],
+            },
+            "radialaxis": {
+                "range": [0, 90],
+                "tickmode": "array",
+                "tickvals": [0, 15, 30, 45, 60, 75, 90],
+                "ticktext": ["90°", "75°", "60°", "45°", "30°", "15°", "0°"],
+                "angle": 90,
+                "tickangle": 90,
+            },
+        },
+    });
+
+    json!({ "data": traces, "layout": layout })
+}
+
+/// Visibility timeline: one row per satellite (top: first satellite)
+fn timeline_json(timeline: &Timeline) -> Value {
+    let mut traces = Vec::new();
+    let mut groups = std::collections::BTreeSet::new();
+
+    for row in timeline.rows.iter() {
+        let (mut x, mut y) = (Vec::new(), Vec::new());
+        for (start, end) in row.intervals.iter() {
+            x.push(json!(time_tag(timeline.origin, *start)));
+            x.push(json!(time_tag(timeline.origin, *end)));
+            x.push(Value::Null);
+            y.push(json!(row.label));
+            y.push(json!(row.label));
+            y.push(Value::Null);
+        }
+        let first_of_group = groups.insert(row.group.clone());
+        traces.push(json!({
+            "type": "scatter",
+            "name": row.label,
+            "legendgroup": row.group,
+            "legendgrouptitle": if first_of_group { json!({"text": row.group}) } else { Value::Null },
+            "showlegend": false,
+            "x": x,
+            "y": y,
+            "mode": "lines",
+            "line": {"color": row.color, "width": 7},
+            "hovertemplate": format!("{} %{{x}}<extra></extra>", row.label),
+        }));
+    }
+
+    let labels = timeline
+        .rows
+        .iter()
+        .map(|row| json!(row.label))
+        .rev()
+        .collect::<Vec<_>>();
+
+    let height = (18 * timeline.rows.len() + 140).max(300);
+
+    let layout = json!({
+        "title": {"text": timeline.title, "font": {"size": 15}},
+        "height": height,
+        "margin": {"l": 60, "r": 20, "t": 48, "b": 48},
+        "hovermode": "closest",
+        "xaxis": {"title": {"text": format!("{}", timeline.origin.time_scale)}},
+        "yaxis": {
+            "type": "category",
+            "categoryorder": "array",
+            "categoryarray": labels,
+            "tickfont": {"size": 10},
+            "automargin": true,
+        },
+    });
+
+    json!({ "data": traces, "layout": layout })
+}
+
 fn chart_json(chart: &Chart) -> Value {
     let traces = chart
         .series
@@ -81,15 +260,42 @@ fn chart_json(chart: &Chart) -> Value {
             let series = series.decimated(MAX_POINTS);
 
             match chart.kind {
-                ChartKind::Map => json!({
-                    "type": "scattermap",
-                    "name": series.name,
-                    "lon": series.x,
-                    "lat": series.y,
-                    "mode": if series.connected { "lines+markers" } else { "markers" },
-                    "marker": {"size": if series.connected { 9 } else { 5 }},
-                    "line": {"width": 3},
-                }),
+                ChartKind::Map | ChartKind::Globe => {
+                    let kind = if chart.kind == ChartKind::Map {
+                        "scattermap"
+                    } else {
+                        "scattergeo"
+                    };
+                    let mut trace = json!({
+                        "type": kind,
+                        "name": series.name,
+                        "lon": series.x,
+                        "lat": series.y,
+                        "mode": if series.connected { "lines+markers" } else { "markers" },
+                        "marker": {"size": if series.connected { 9 } else { 6 }},
+                        "line": {"width": 3},
+                    });
+                    if series.anchor {
+                        // stations: large marker, labeled
+                        trace["mode"] = json!("markers+text");
+                        trace["marker"] = json!({"size": 16, "color": "#d62728"});
+                        trace["text"] = json!(vec![series.name.clone(); series.x.len()]);
+                        trace["textposition"] = json!("top right");
+                        trace["textfont"] = json!({"size": 13, "color": "#111"});
+                    } else if let Some(colors) = &series.colors {
+                        trace["marker"] = json!({
+                            "size": 7,
+                            "color": colors,
+                            "colorscale": "Viridis",
+                            "showscale": true,
+                            "colorbar": {
+                                "title": {"text": chart.color_label.clone().unwrap_or_default()},
+                                "thickness": 14,
+                            },
+                        });
+                    }
+                    trace
+                },
                 _ => {
                     // lines are interrupted over data gaps
                     let (xs, ys) = if chart.kind == ChartKind::Lines {
@@ -134,25 +340,35 @@ fn chart_json(chart: &Chart) -> Value {
         "hovermode": "closest",
     });
 
-    if chart.kind == ChartKind::Map {
-        // center and zoom from the extent of the points
-        let (mut lon_min, mut lon_max, mut lat_min, mut lat_max) =
-            (f64::MAX, f64::MIN, f64::MAX, f64::MIN);
-        for series in chart.series.iter() {
-            for (lon, lat) in series.x.iter().zip(series.y.iter()) {
-                lon_min = lon_min.min(*lon);
-                lon_max = lon_max.max(*lon);
-                lat_min = lat_min.min(*lat);
-                lat_max = lat_max.max(*lat);
-            }
+    if chart.kind == ChartKind::Map || chart.kind == ChartKind::Globe {
+        let (lon_min, lon_max, lat_min, lat_max) = extent(chart);
+        let center = json!({"lon": (lon_min + lon_max) / 2.0, "lat": (lat_min + lat_max) / 2.0});
+
+        if chart.kind == ChartKind::Map {
+            layout["map"] = json!({
+                "style": "open-street-map",
+                "center": center,
+                "zoom": map_zoom(lon_min, lon_max, lat_min, lat_max),
+            });
+            layout["legend"] = json!({"orientation": "h", "y": -0.02});
+        } else {
+            layout["geo"] = json!({
+                "projection": {
+                    "type": "orthographic",
+                    "rotation": {"lon": center["lon"], "lat": center["lat"]},
+                },
+                "showland": true,
+                "landcolor": "#e3e7d3",
+                "showocean": true,
+                "oceancolor": "#cfe3f3",
+                "showcountries": true,
+                "countrycolor": "#9aa5b1",
+                "showcoastlines": true,
+                "coastlinecolor": "#6b7a89",
+                "lataxis": {"showgrid": true, "gridcolor": "#bcc6d0", "dtick": 30},
+                "lonaxis": {"showgrid": true, "gridcolor": "#bcc6d0", "dtick": 30},
+            });
         }
-        let extent = (lon_max - lon_min).max(lat_max - lat_min).max(1.0E-5);
-        let zoom = (360.0 / extent).log2().clamp(1.0, 19.0) - 1.0;
-        layout["map"] = json!({
-            "style": "open-street-map",
-            "center": {"lon": (lon_min + lon_max) / 2.0, "lat": (lat_min + lat_max) / 2.0},
-            "zoom": zoom,
-        });
     } else {
         layout["xaxis"] = json!({"title": {"text": chart.x_label}});
         layout["yaxis"] = json!({"title": {"text": chart.y_label}});
@@ -275,8 +491,25 @@ pub fn render(report: &Report) -> String {
                                     format!("chart-{}", chart_index)
                                 };
                                 @let _ = charts.insert(id.clone(), chart_json(chart));
-                                div id=(id) class={ "chart" @if chart.kind == ChartKind::Map { " map" } } {}
+                                div id=(id) class={ "chart" @if chart.kind == ChartKind::Map { " map" } @if chart.kind == ChartKind::Globe { " globe" } } {}
                             }
+                        },
+                        Block::Skyplot(skyplot) => {
+                            @let id = {
+                                chart_index += 1;
+                                format!("chart-{}", chart_index)
+                            };
+                            @let _ = charts.insert(id.clone(), skyplot_json(skyplot));
+                            div id=(id) class="chart skyplot" {}
+                        },
+                        Block::Timeline(timeline) => {
+                            @let id = {
+                                chart_index += 1;
+                                format!("chart-{}", chart_index)
+                            };
+                            @let _ = charts.insert(id.clone(), timeline_json(timeline));
+                            @let height = format!("height: {}px", (18 * timeline.rows.len() + 140).max(300));
+                            div id=(id) class="chart timeline" style=(height) {}
                         },
                         Block::Heatmap(heatmap) => {
                             @if !heatmap.frames.is_empty() {

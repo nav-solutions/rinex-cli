@@ -5,7 +5,10 @@
 //! end of the session. Renderers then format the report: HTML (interactive),
 //! PDF (static, pdf feature).
 pub mod analysis;
+#[cfg(feature = "pdf")]
+pub mod geo;
 mod html;
+pub mod sky;
 mod stats;
 
 #[cfg(feature = "pdf")]
@@ -81,6 +84,10 @@ pub enum Block {
     /// Color map over a regular grid (one frame per epoch)
     #[cfg_attr(not(feature = "ionex"), allow(dead_code))]
     Heatmap(Heatmap),
+    /// Sky plot: polar projection (azimuth, elevation) of the satellites
+    Skyplot(sky::Skyplot),
+    /// Visibility timeline: one row per satellite, segments where it is seen
+    Timeline(sky::Timeline),
 }
 
 /// One frame of a [Heatmap]
@@ -160,8 +167,13 @@ pub enum ChartKind {
     Lines,
     /// Markers
     Markers,
-    /// Geographic map: x is longitude, y is latitude (degrees)
+    /// Geographic map: x is longitude, y is latitude (degrees).
+    /// HTML: map tiles (OpenStreetMap). PDF: local plan (meters), north up.
     Map,
+    /// World map (globe) centered on the points, to locate them:
+    /// x is longitude, y is latitude (degrees)
+    #[cfg_attr(not(feature = "navigation"), allow(dead_code))]
+    Globe,
 }
 
 #[derive(Debug, Clone)]
@@ -171,6 +183,10 @@ pub struct Series {
     pub y: Vec<f64>,
     /// Points connected by a line, whatever the kind of chart (segments, baselines..)
     pub connected: bool,
+    /// Remarkable point (station..): large marker, labeled
+    pub anchor: bool,
+    /// One value per point, presented as a color scale (see [Chart::color_label])
+    pub colors: Option<Vec<f64>>,
 }
 
 impl Series {
@@ -180,7 +196,23 @@ impl Series {
             x: Vec::new(),
             y: Vec::new(),
             connected: false,
+            anchor: false,
+            colors: None,
         }
+    }
+
+    /// Remarkable point (station..): large marker, labeled
+    #[cfg_attr(not(feature = "navigation"), allow(dead_code))]
+    pub fn anchor(mut self) -> Self {
+        self.anchor = true;
+        self
+    }
+
+    /// Colors the points by these values (one per point)
+    #[cfg_attr(not(feature = "navigation"), allow(dead_code))]
+    pub fn with_colors(mut self, values: Vec<f64>) -> Self {
+        self.colors = Some(values);
+        self
     }
 
     /// Points connected by a line, whatever the kind of chart
@@ -206,6 +238,11 @@ impl Series {
             x: self.x.iter().step_by(step).copied().collect(),
             y: self.y.iter().step_by(step).copied().collect(),
             connected: self.connected,
+            anchor: self.anchor,
+            colors: self
+                .colors
+                .as_ref()
+                .map(|c| c.iter().step_by(step).copied().collect()),
         }
     }
 }
@@ -219,6 +256,8 @@ pub struct Chart {
     pub kind: ChartKind,
     /// Same scale on both axes (horizontal scatter plots)
     pub equal_axes: bool,
+    /// Label of the color scale (series colored by value)
+    pub color_label: Option<String>,
     pub series: Vec<Series>,
 }
 
@@ -232,6 +271,7 @@ impl Chart {
             x_axis: XAxis::Time(origin),
             kind: ChartKind::Lines,
             equal_axes: false,
+            color_label: None,
             series: Vec::new(),
         }
     }
@@ -246,8 +286,16 @@ impl Chart {
             x_axis: XAxis::Linear,
             kind: ChartKind::Markers,
             equal_axes: false,
+            color_label: None,
             series: Vec::new(),
         }
+    }
+
+    /// Label of the color scale (series colored by value)
+    #[cfg_attr(not(feature = "navigation"), allow(dead_code))]
+    pub fn with_color_label(mut self, label: &str) -> Self {
+        self.color_label = Some(label.to_string());
+        self
     }
 
     pub fn with_kind(mut self, kind: ChartKind) -> Self {
