@@ -1,6 +1,6 @@
 [package]
 name = "rinex-cli"
-version = "0.14.0"
+version = "0.14.1"
 license = "MPL-2.0"
 authors = ["Guillaume W. Bres <guillaume.bressaix@gmail.com>"]
 description = "GNSS data post processing and quality control, powered by GNSS-Qc"
