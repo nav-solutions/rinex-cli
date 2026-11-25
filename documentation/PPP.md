@@ -67,6 +67,7 @@ Options
 | `--cfg nav.json` | Navigation configuration (GNSS-Qc `QcNavigationConfig`), may be partial, see [examples/CONFIG](../examples/CONFIG) |
 | `--anise-dir DIR` | ANISE dataset (`GNSS_QC_ANISE_DIR`) |
 | `--gpx`, `--kml` | Also format the solutions as GPX / KML tracks |
+| `--no-combinations` | Do not analyze the signal combinations (GF, IF, code multipath) in the report |
 
 The command line options take precedence over the configuration file.
 The preprocessing options (`-G`, `-E`.., `-P` filters) apply before the navigation:
@@ -85,9 +86,14 @@ rover (with the distance travelled, speed and altitude range), receiver clock, D
   zenith at the center, colored by constellation (hue) then satellite (shade)
   - a **visibility timeline**: one row per satellite, segments where it is used by the solver
   - the RTK baseline in RTK
+  - the **signal combinations** of the rover (and of the RTK base), one sub-section per
+  constellation: Geometry Free (ionosphere, cycle slips), Ionosphere Free (what CPP and PPP
+  actually navigate with) and code multipath, for the constellations of the navigation, see
+  [signal combinations](./Combinations.md). `--no-combinations` removes them
   - then the quality control of the observations of every receiver, as in the `qc` report: sampling,
   data gaps, satellites in view, signal strength, ephemeris coverage, and the sky plot of all the
   satellites observed (broadcast ephemerides, seen from the navigation solutions). `--no-qc` removes it
+- `data/combinations.csv`, `data/multipath_arcs.csv`: signal combinations (`--data csv`)
 - `data/coverage.csv`: ephemeris coverage of the observations (quality control)
 - `summary.json`: navigation context and end of session statistics
 

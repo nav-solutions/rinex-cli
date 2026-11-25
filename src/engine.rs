@@ -49,12 +49,36 @@ pub struct SessionContext {
 
     /// Quality control of the observations deployed (signal sources, sky view)
     pub qc: bool,
+
+    /// Signal combinations deployed next to a processing command (navigation)
+    pub combinations: bool,
 }
 
 /// Engine and consumers, ready to run
 pub struct Plan {
     pub engine: QcEngine<QcOutput>,
     pub consumers: Vec<Box<dyn Consumer>>,
+}
+
+/// Signal combinations (GF, IF, code multipath) of the navigated signal sources
+#[cfg(feature = "navigation")]
+fn with_combinations(
+    builder: QcEngineBuilder<QcOutput>,
+    cfg: gnss_qc::prelude::QcCombinationConfig,
+    setup: &mut Vec<(String, String)>,
+) -> QcEngineBuilder<QcOutput> {
+    setup.push((
+        "Signal combinations".to_string(),
+        format!(
+            "GF, IF, MP: {}",
+            cfg.receivers
+                .iter()
+                .map(|r| r.to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+    ));
+    builder.with_processor(gnss_qc::prelude::QcCombinationProcessor::new(cfg))
 }
 
 /// Quality control of the observations: signal sources, and with navigation RINEX,
@@ -193,6 +217,8 @@ pub fn plan(cli: &Cli, mut inputs: Inputs, workspace: &Workspace) -> Result<Plan
     // quality control of the observations, in the reports of the processing commands
     let qc = !cli.outputs.no_qc;
     let mut qc_deployed = false;
+    #[allow(unused_mut)]
+    let mut combinations_deployed = false;
 
     let (command, engine) = match &cli.command {
         Command::Index(_)
@@ -231,10 +257,19 @@ pub fn plan(cli: &Cli, mut inputs: Inputs, workspace: &Workspace) -> Result<Plan
 
             let almanac = crate::nav::almanac(args.navigation.anise_dir.as_deref())?;
 
+            let combination_cfg = crate::nav::combinations(&cfg);
+
             let processor = QcNavigationProcessor::new(almanac, cfg)
                 .map_err(|e| Error::Navigation(e.to_string()))?;
 
             let mut builder = builder(cli, &mut inputs).with_processor(processor);
+
+            // signal combinations of the navigated signal sources
+            if !args.no_combinations {
+                builder = with_combinations(builder, combination_cfg, &mut setup);
+                combinations_deployed = true;
+            }
+
             if qc {
                 (builder, qc_deployed) = with_qc(builder, &inputs, true, &mut setup);
             }
@@ -282,10 +317,19 @@ pub fn plan(cli: &Cli, mut inputs: Inputs, workspace: &Workspace) -> Result<Plan
 
             let almanac = crate::nav::almanac(args.navigation.anise_dir.as_deref())?;
 
+            let combination_cfg = crate::nav::combinations(&cfg);
+
             let processor = QcCggttsProcessor::new(almanac, cfg, cggtts_cfg)
                 .map_err(|e| Error::Navigation(e.to_string()))?;
 
             let mut builder = builder(cli, &mut inputs).with_processor(processor);
+
+            // signal combinations of the receiver
+            if !args.no_combinations {
+                builder = with_combinations(builder, combination_cfg, &mut setup);
+                combinations_deployed = true;
+            }
+
             if qc {
                 (builder, qc_deployed) = with_qc(builder, &inputs, true, &mut setup);
             }
@@ -445,6 +489,97 @@ pub fn plan(cli: &Cli, mut inputs: Inputs, workspace: &Workspace) -> Result<Plan
 
                 ("residuals clock", engine)
             },
+        },
+
+        Command::Combinations(args) => {
+            use gnss_qc::prelude::{QcCombinationConfig, QcCombinationKind, QcCombinationProcessor};
+
+            if inputs.entries(ProductKind::Observation).next().is_none() {
+                return Err(Error::Config(
+                    "signal combinations require observations".to_string(),
+                ));
+            }
+
+            let all = !args.gf && !args.iono_free && !args.mp;
+
+            let mut cfg = QcCombinationConfig {
+                geometry_free: all || args.gf,
+                ionosphere_free: all || args.iono_free,
+                multipath: all || args.mp,
+                code: !args.phase_only,
+                phase: !args.code_only,
+                max_gap: Duration::from_seconds(args.max_gap),
+                jump_threshold_m: args.jump,
+                ..Default::default()
+            };
+
+            if !args.constellations.is_empty() {
+                cfg.constellations = parse_constellations(&args.constellations)?;
+            }
+
+            for receiver in args.receivers.iter() {
+                cfg.receivers
+                    .push(inputs.resolve(receiver, ProductKind::Observation)?);
+            }
+
+            let kinds = [
+                (cfg.geometry_free, QcCombinationKind::GeometryFree),
+                (cfg.ionosphere_free, QcCombinationKind::IonosphereFree),
+                (cfg.multipath, QcCombinationKind::Multipath),
+            ]
+            .iter()
+            .filter(|(selected, _)| *selected)
+            .map(|(_, kind)| kind.to_string())
+            .collect::<Vec<_>>();
+
+            setup.push(("Combinations".to_string(), kinds.join(", ")));
+            setup.push((
+                "Measurements (GF, IF)".to_string(),
+                match (cfg.code, cfg.phase) {
+                    (true, true) => "code and phase",
+                    (true, false) => "code",
+                    _ => "phase",
+                }
+                .to_string(),
+            ));
+            if cfg.multipath {
+                setup.push((
+                    "Multipath arcs".to_string(),
+                    format!(
+                        "loss of lock, gaps > {} s, jumps > {} m",
+                        args.max_gap, args.jump
+                    ),
+                ));
+            }
+            if !cfg.constellations.is_empty() {
+                setup.push((
+                    "Constellations".to_string(),
+                    cfg.constellations
+                        .iter()
+                        .map(|c| c.to_string())
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                ));
+            }
+            if !cfg.receivers.is_empty() {
+                setup.push((
+                    "Signal sources".to_string(),
+                    cfg.receivers
+                        .iter()
+                        .map(|r| r.to_string())
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                ));
+            }
+
+            let mut builder =
+                builder(cli, &mut inputs).with_processor(QcCombinationProcessor::new(cfg));
+            if qc {
+                (builder, qc_deployed) = with_qc(builder, &inputs, true, &mut setup);
+            }
+            let engine = builder.build().map_err(engine_error)?;
+
+            ("combinations", engine)
         },
 
         Command::Meteo(args) => {
@@ -633,6 +768,7 @@ pub fn plan(cli: &Cli, mut inputs: Inputs, workspace: &Workspace) -> Result<Plan
         #[cfg(feature = "navigation")]
         navigation,
         qc: qc_deployed,
+        combinations: combinations_deployed,
     };
 
     consumers.push(Box::new(SummarySink::new(workspace, &context)));

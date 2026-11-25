@@ -334,6 +334,23 @@ pub fn configure(
     ))
 }
 
+/// Signal combinations of the navigated signal sources: rover (and RTK base),
+/// constellations of the navigation.
+pub fn combinations(cfg: &QcNavigationConfig) -> gnss_qc::prelude::QcCombinationConfig {
+    let mut combinations = gnss_qc::prelude::QcCombinationConfig::default();
+
+    if let Some(rover) = &cfg.rover {
+        combinations.receivers.push(rover.clone());
+    }
+
+    if let gnss_qc::prelude::QcNavigationTechnique::Rtk { base, .. } = &cfg.technique {
+        combinations.receivers.push(base.clone());
+    }
+
+    combinations.constellations = cfg.constellations.clone();
+    combinations
+}
+
 #[cfg(test)]
 mod test {
     use super::*;

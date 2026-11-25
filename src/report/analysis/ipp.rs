@@ -418,6 +418,7 @@ mod test {
             #[cfg(feature = "navigation")]
             navigation: None,
             qc: false,
+            combinations: false,
         };
         let mut analysis = IppAnalysis::new(&context);
         analysis.positions.insert(

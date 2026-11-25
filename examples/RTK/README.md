@@ -29,6 +29,9 @@ The navigation report gains an *RTK baseline* section:
 - baseline in the local frame of the base (east/north, km, equal axes)
 - baseline length error (estimated − reference) over time
 
+The report then presents the signal combinations of the rover and of the base (Geometry Free,
+Ionosphere Free, code multipath, per constellation, see [signal combinations](../../documentation/Combinations.md)).
+
 The receiver clock chart is not presented: RTK does not resolve the receiver clock (it cancels out in the double differences).
 
 RTK-SPP versus RTK-PPP

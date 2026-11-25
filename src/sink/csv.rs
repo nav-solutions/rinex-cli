@@ -113,6 +113,45 @@ impl Consumer for CsvSink {
                     residual.rhs_epoch,
                 )?;
             },
+            QcOutput::Combination(c) => {
+                let fd = self.file(
+                    "combinations",
+                    "epoch,receiver,sv,combination,lhs,rhs,value_m,arc,debiased_m",
+                )?;
+                writeln!(
+                    fd,
+                    "{},{},{},{},{},{},{},{},{}",
+                    epoch,
+                    field(&c.receiver.to_string()),
+                    c.sv,
+                    c.kind,
+                    c.lhs,
+                    c.rhs,
+                    c.value_m,
+                    opt(&c.arc),
+                    opt(&c.debiased_m),
+                )?;
+            },
+            QcOutput::MultipathArc(arc) => {
+                let fd = self.file(
+                    "multipath_arcs",
+                    "receiver,sv,code,phase,arc,start,end,samples,mean_m,rms_m",
+                )?;
+                writeln!(
+                    fd,
+                    "{},{},{},{},{},{},{},{},{},{}",
+                    field(&arc.receiver.to_string()),
+                    arc.sv,
+                    arc.code,
+                    arc.phase,
+                    arc.arc,
+                    arc.start,
+                    arc.end,
+                    arc.samples,
+                    arc.mean_m,
+                    arc.rms_m,
+                )?;
+            },
             QcOutput::OrbitResidual(residual) => {
                 let fd = self.file(
                     "orbit_residuals",

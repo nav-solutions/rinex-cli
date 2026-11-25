@@ -23,7 +23,7 @@ not real-time navigation, and emphasizes a fraction of what `gnss-qc` offers:
 
 - Quality control: sampling, data gaps, signal strength, lock losses, ephemeris coverage,
   sky plot and satellite visibility timeline. The reports of the processing commands
-  (`nav`, `cggtts`, `ipp`, `residuals obs`) end with the same quality control of their observations
+  (`nav`, `cggtts`, `ipp`, `residuals obs`, `combinations`) end with the same quality control of their observations
 - Post processed navigation: SPP, CPP, PPP (`navigation` feature)
 - RTK (differential) navigation: RTK-SPP, RTK-CPP, RTK-PPP, with the baseline in the report
 - Navigation reports: trajectory map (OpenStreetMap in HTML, local plan in PDF), world map,
@@ -32,6 +32,9 @@ not real-time navigation, and emphasizes a fraction of what `gnss-qc` offers:
 - Residual analysis: receiver A − receiver B, orbital product A − product B,
   clock product A − product B (two analysis centers)
 - Meteo sensors analysis (Meteo RINEX)
+- Signal combinations: Geometry Free (ionosphere), Ionosphere Free and code multipath,
+  for every pair of frequencies, per constellation. Also part of the navigation reports
+  (rover, and base in RTK) and of the CGGTTS reports
 - TEC maps analysis, temporal interpolation and IONEX synthesis (`ionex` feature)
 - Ionospheric Pierce Points (`ionex` feature): regional and world maps of the pierce points,
   vertical TEC at the pierce points (IONEX), lines of sight
@@ -159,12 +162,13 @@ part (faster on long sessions). The JSON lines deserialize into `gnss_qc::prelud
 |---------|-------------|
 | `index` | Lists the input products, as indexed (`--json`) |
 | `qc` | Quality control of the signal sources |
-| `nav` | P.V.T solutions: `--method spp\|cpp\|ppp`, `--rover`, `--base` / `--base-position` (RTK), `--orbits auto\|precise\|broadcast`, `-c gps,gal`, `--profile`, `--static`, `--clock`, `--apriori`, `--reference`, `--cfg nav.json`, `--anise-dir`, `--gpx`, `--kml`. See [navigation](documentation/PPP.md) and [RTK](documentation/RTK.md) |
-| `cggtts` | CGGTTS solutions, same navigation options + `--station`, `--frame`, `--min-track`, `--solutions` |
+| `nav` | P.V.T solutions: `--method spp\|cpp\|ppp`, `--rover`, `--base` / `--base-position` (RTK), `--orbits auto\|precise\|broadcast`, `-c gps,gal`, `--profile`, `--static`, `--clock`, `--apriori`, `--reference`, `--cfg nav.json`, `--anise-dir`, `--gpx`, `--kml`, `--no-combinations`. See [navigation](documentation/PPP.md) and [RTK](documentation/RTK.md) |
+| `cggtts` | CGGTTS solutions, same navigation options + `--station`, `--frame`, `--min-track`, `--solutions`, `--no-combinations` |
 | `residuals obs` | Receiver A − receiver B: `--lhs`, `--rhs`, `--all`, `--tolerance` |
 | `residuals orbit` | Product A − product B: `--lhs`, `--rhs` (`sp3`, `sp3:PRODUCT`, `nav`, `nav:PRODUCT`), `--sampling`, `--max-age`, `-c` |
 | `residuals clock` | Clock product A − product B: `--lhs`, `--rhs` (`clk`, `clk:PRODUCT`, `sp3`, `sp3:PRODUCT`, `nav`, `nav:PRODUCT`), `--sampling`, `--alignment`, `--satellites-only`, `--stations-only`, `-c`. See [clock residuals](documentation/ClockResiduals.md) |
 | `meteo` | Meteo sensors: statistics and time series (`--observables`). See [meteo](documentation/Meteo.md) |
+| `combinations` (`comb`) | Signal combinations: Geometry Free, Ionosphere Free, code multipath (`--gf`, `--if`, `--mp`, `--code-only`, `--phase-only`, `-c`, `--receivers`, `--max-gap`, `--jump`). See [signal combinations](documentation/Combinations.md) |
 | `tec` | TEC maps (IONEX): statistics per region (`--region`), temporal interpolation (`--upsample`, `--resample`, `--interpolation`), IONEX synthesis (`--no-ionex`, `--gzip`). See [TEC maps](documentation/TEC.md) |
 | `ipp` | Ionospheric Pierce Points: `--elevation-mask`, `--shell-altitude`, `--orbits`, `-c`. See [pierce points](documentation/IPP.md) |
 | `filegen` | Writes the (preprocessed) products as RINEX / SP3 |

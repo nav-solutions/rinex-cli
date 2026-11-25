@@ -9,6 +9,7 @@ This folder gives substantial examples of each command line option.
 - [Post Processed Positioning (PPP) with +cggtts option](./CGGTTS)
 - [Clock residuals between analysis centers](./CLOCK)
 - [Meteo sensors](./METEO)
+- [Signal combinations: Geometry Free, Ionosphere Free, code multipath](./COMBINATIONS)
 - [TEC maps (IONEX): analysis, interpolation, synthesis](./IONEX)
 
 ## Demos

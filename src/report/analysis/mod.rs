@@ -1,4 +1,5 @@
 //! Accumulators: analyze the output stream, build the report sections.
+mod combinations;
 pub mod context;
 mod meteo;
 mod residuals;
@@ -39,6 +40,7 @@ pub fn for_command(context: &SessionContext) -> Vec<Box<dyn Analysis>> {
         "residuals orbit" => analyses.push(Box::new(residuals::OrbitResiduals::default())),
         "residuals clock" => analyses.push(Box::new(residuals::ClockResiduals::default())),
         "meteo" => analyses.push(Box::new(meteo::MeteoAnalysis::default())),
+        "combinations" => analyses.push(Box::new(combinations::CombinationAnalysis::new(context))),
         #[cfg(feature = "ionex")]
         "tec" => analyses.push(Box::new(tec::TecAnalysis::default())),
         #[cfg(feature = "navigation")]
@@ -51,6 +53,11 @@ pub fn for_command(context: &SessionContext) -> Vec<Box<dyn Analysis>> {
         #[cfg(feature = "ionex")]
         "ipp" => analyses.push(Box::new(ipp::IppAnalysis::new(context))),
         _ => {},
+    }
+
+    // navigation: signal combinations of the rover (and base)
+    if context.combinations && context.command != "combinations" {
+        analyses.push(Box::new(combinations::CombinationAnalysis::new(context)));
     }
 
     // processing commands: the quality control of the observations follows

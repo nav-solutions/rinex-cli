@@ -329,6 +329,11 @@ pub enum Command {
     /// (Meteo RINEX).
     Meteo(MeteoArgs),
 
+    /// Signal combinations of the observations: Geometry Free (ionosphere, cycle slips),
+    /// Ionosphere Free and code multipath, for every pair of frequencies.
+    #[command(visible_alias = "comb")]
+    Combinations(CombinationsArgs),
+
     /// TEC maps analysis (IONEX): statistics per region, map after map; temporal
     /// interpolation and synthesis of new IONEX files. Requires the ionex feature.
     Tec(TecArgs),
@@ -602,6 +607,11 @@ pub struct NavArgs {
     #[arg(long, value_name = "x,y,z")]
     pub base_position: Option<String>,
 
+    /// Do not analyze the signal combinations (Geometry Free, Ionosphere Free,
+    /// code multipath) of the rover (and base) in the navigation report
+    #[arg(long)]
+    pub no_combinations: bool,
+
     /// Also format the solutions as a GPX track
     #[arg(long)]
     pub gpx: bool,
@@ -631,6 +641,11 @@ pub struct CggttsArgs {
     /// Also stream (and report) the P.V.T solutions
     #[arg(long)]
     pub solutions: bool,
+
+    /// Do not analyze the signal combinations (Geometry Free, Ionosphere Free,
+    /// code multipath) of the receiver in the CGGTTS report
+    #[arg(long)]
+    pub no_combinations: bool,
 }
 
 #[derive(Debug, Args)]
@@ -693,6 +708,46 @@ pub struct ClockResidualsArgs {
     /// Constellations, comma separated. Default: all.
     #[arg(short, long, value_delimiter = ',')]
     pub constellations: Vec<String>,
+}
+
+#[derive(Debug, Args)]
+pub struct CombinationsArgs {
+    /// Geometry Free combinations (phase: Lj − L1, code: C1 − Cj).
+    /// When none of --gf, --if, --mp is selected: all of them.
+    #[arg(long)]
+    pub gf: bool,
+
+    /// Ionosphere Free combinations: (f1² X1 − fj² Xj) / (f1² − fj²)
+    #[arg(long = "if")]
+    pub iono_free: bool,
+
+    /// Code multipath: MPi = Ci − Li − 2 (Li − Lj) / (αij − 1)
+    #[arg(long)]
+    pub mp: bool,
+
+    /// GF and IF: combine the pseudo ranges only
+    #[arg(long, conflicts_with = "phase_only")]
+    pub code_only: bool,
+
+    /// GF and IF: combine the phase ranges only
+    #[arg(long)]
+    pub phase_only: bool,
+
+    /// Constellations, comma separated. Default: all (Glonass excluded: FDMA).
+    #[arg(short, long, value_delimiter = ',')]
+    pub constellations: Vec<String>,
+
+    /// Signal sources to analyze (identity or alias), comma separated. Default: all.
+    #[arg(long, value_delimiter = ',')]
+    pub receivers: Vec<String>,
+
+    /// Multipath: a data gap longer than this (s) ends the phase arc
+    #[arg(long, default_value_t = 600.0)]
+    pub max_gap: f64,
+
+    /// Multipath: a jump larger than this (m) ends the phase arc (cycle slip)
+    #[arg(long, default_value_t = 5.0)]
+    pub jump: f64,
 }
 
 #[derive(Debug, Args)]

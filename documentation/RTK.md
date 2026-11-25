@@ -128,6 +128,11 @@ for a moving rover), DOP and satellites charts:
   - the baseline length error (estimated − reference) over time
 - a sky plot and a visibility timeline of the satellites used by the solver
 - no receiver clock chart (RTK does not resolve it)
+- the **signal combinations** of the rover *and* of the base, one section per receiver (tagged
+`rover` / `base`), one sub-section per constellation: Geometry Free, Ionosphere Free and code
+multipath (see [signal combinations](./Combinations.md)). Both receivers being presented side by
+side, you can compare their multipath environments, or relate a degradation of the solutions to the
+ionosphere (GF) or to the code multipath of one of them. `--no-combinations` removes them
 
 A moving rover (`--profile pedestrian`, `car`..) has no reference position, unless `--reference` is
 given: its solutions are presented as displacements relative to the first solution, with the
