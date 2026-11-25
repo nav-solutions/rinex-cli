@@ -82,4 +82,4 @@ sp3 = { version = "1.5", features = ["qc", "processing", "flate2"] }
 ionex = { version = "0.2", optional = true, default-features = false, features = ["flate2"] }
 
 gnss-qc-traits = { version = "0.6", features = ["processing"] }
-gnss-qc = { version = "0.7", default-features = false, features = ["sp3", "flate2", "serde", "log"] }
+gnss-qc = { version = "0.8", default-features = false, features = ["sp3", "flate2", "serde", "log"] }
