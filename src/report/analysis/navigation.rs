@@ -2,15 +2,15 @@
 use std::collections::BTreeMap;
 
 use gnss_qc::{
-    geodesy::ecef_to_enu_vector,
+    geodesy::{ecef_to_enu_vector, ecef_to_geodetic},
     prelude::{Epoch, QcNavigationReport, QcOutput, QcOutputItem},
 };
 
 use crate::{
     engine::SessionContext,
     report::{
-        analysis::Analysis, elapsed_s, stats::fmt, Block, Chart, ChartKind, Section, Series, Stats,
-        Table,
+        analysis::Analysis, elapsed_s, sky::SkyAccumulator, stats::fmt, Block, Chart, ChartKind,
+        Section, Series, Stats, Table,
     },
     sink::RunSummary,
 };
@@ -28,12 +28,124 @@ struct Solution {
     satellites: usize,
 }
 
+/// ECEF coordinates (m)
+type Ecef = (f64, f64, f64);
+
 pub struct NavigationAnalysis {
     /// Reference position of the rover
     reference_ecef_m: Option<(f64, f64, f64)>,
     rover: Option<String>,
+    /// Moving rover: displacements rather than errors
+    moving: bool,
+    /// RTK base: identity and position
+    base: Option<(String, Option<Ecef>)>,
     solutions: BTreeMap<String, Vec<Solution>>,
     reports: BTreeMap<String, QcNavigationReport>,
+    /// Satellites used by the solver, per receiver
+    skies: BTreeMap<String, SkyAccumulator>,
+}
+
+/// Map of the solutions: the track is colored by the elapsed time (minutes),
+/// the RTK base (if any) is marked
+fn trajectory_map(
+    title: &str,
+    receiver: &str,
+    origin: Epoch,
+    solutions: &[Solution],
+    base: Option<(&str, Ecef)>,
+    baseline_end: Option<Ecef>,
+) -> Chart {
+    let mut chart = Chart::xy(title, "Longitude (°)", "Latitude (°)")
+        .with_kind(ChartKind::Map)
+        .with_color_label("minutes");
+
+    if let (Some((_, base_ecef_m)), Some(end)) = (base, baseline_end) {
+        let (base_lat, base_long, _) = degrees(base_ecef_m);
+        let (lat, long, _) = degrees(end);
+        let mut baseline = Series::new("baseline").connected();
+        baseline.push(base_long, base_lat);
+        baseline.push(long, lat);
+        chart.push(baseline);
+    }
+
+    let mut track = Series::new(receiver);
+    let mut minutes = Vec::with_capacity(solutions.len());
+    for s in solutions.iter() {
+        track.push(s.lat_long_alt.1, s.lat_long_alt.0);
+        minutes.push(elapsed_s(origin, s.epoch) / 60.0);
+    }
+    chart.push(track.with_colors(minutes));
+
+    if let Some((name, base_ecef_m)) = base {
+        let (lat, long, _) = degrees(base_ecef_m);
+        let mut point = Series::new(&format!("base: {}", name)).anchor();
+        point.push(long, lat);
+        chart.push(point);
+    }
+
+    chart
+}
+
+/// Distance travelled, speed, altitude range of a moving rover
+fn trajectory_summary(solutions: &[Solution]) -> Vec<(String, String)> {
+    let mut distance = 0.0;
+    let mut speeds = Stats::default();
+    let mut climb = 0.0;
+    for w in solutions.windows(2) {
+        let (a, b) = (&w[0], &w[1]);
+        let (e, n, u) = ecef_to_enu_vector(a.pos_m, sub3(b.pos_m, a.pos_m));
+        let horizontal = (e * e + n * n).sqrt();
+        distance += horizontal;
+        if u > 0.0 {
+            climb += u;
+        }
+        let dt = (b.epoch - a.epoch).to_seconds();
+        if dt > 0.0 {
+            speeds.push(horizontal / dt);
+        }
+    }
+    let altitudes = solutions.iter().map(|s| s.lat_long_alt.2);
+    let (alt_min, alt_max) = altitudes.fold((f64::MAX, f64::MIN), |(a, b), h| (a.min(h), b.max(h)));
+    vec![
+        (
+            "Distance travelled (horizontal)".to_string(),
+            format!("{:.0} m", distance),
+        ),
+        (
+            "Speed".to_string(),
+            format!(
+                "mean {:.2} m/s ({:.1} km/h), max {:.2} m/s",
+                speeds.mean(),
+                speeds.mean() * 3.6,
+                speeds.max
+            ),
+        ),
+        (
+            "Altitude".to_string(),
+            format!(
+                "{:.1} → {:.1} m (cumulated climb {:.0} m)",
+                alt_min, alt_max, climb
+            ),
+        ),
+    ]
+}
+
+/// World map, centered on the solutions (and the base)
+fn locator(receiver: &str, solutions: &[Solution], base: Option<(&str, Ecef)>) -> Chart {
+    let mut chart =
+        Chart::xy("Location", "Longitude (°)", "Latitude (°)").with_kind(ChartKind::Globe);
+    if let Some(last) = solutions.last() {
+        let mut point = Series::new(receiver);
+        point.push(last.lat_long_alt.1, last.lat_long_alt.0);
+        chart.push(point);
+    }
+    if let Some((name, base_ecef_m)) = base {
+        let (lat, long, _) = degrees(base_ecef_m);
+        let mut point = Series::new(&format!("base: {}", name));
+        point.push(long, lat);
+        chart.push(point);
+    }
+    chart
 }
 
 impl NavigationAnalysis {
@@ -44,8 +156,15 @@ impl NavigationAnalysis {
                 .as_ref()
                 .and_then(|nav| nav.reference_ecef_m),
             rover: context.navigation.as_ref().map(|nav| nav.rover.clone()),
+            moving: context.navigation.as_ref().is_some_and(|nav| nav.moving),
+            base: context.navigation.as_ref().and_then(|nav| {
+                nav.base
+                    .as_ref()
+                    .map(|base| (base.clone(), nav.base_ecef_m))
+            }),
             solutions: BTreeMap::new(),
             reports: BTreeMap::new(),
+            skies: BTreeMap::new(),
         }
     }
 }
@@ -88,6 +207,179 @@ impl ErrorStats {
     }
 }
 
+fn sub3(a: (f64, f64, f64), b: (f64, f64, f64)) -> (f64, f64, f64) {
+    (a.0 - b.0, a.1 - b.1, a.2 - b.2)
+}
+
+fn norm3(a: (f64, f64, f64)) -> f64 {
+    (a.0 * a.0 + a.1 * a.1 + a.2 * a.2).sqrt()
+}
+
+fn degrees(ecef_m: (f64, f64, f64)) -> (f64, f64, f64) {
+    let (lat, long, alt) = ecef_to_geodetic(ecef_m);
+    (lat.to_degrees(), long.to_degrees(), alt)
+}
+
+/// RTK baseline: base → rover vector (local frame of the base), estimated and reference
+#[allow(clippy::too_many_arguments)]
+fn baseline_section(
+    section: &mut Section,
+    origin: Epoch,
+    base: &str,
+    base_ecef_m: (f64, f64, f64),
+    reference_ecef_m: Option<(f64, f64, f64)>,
+    rover: &str,
+    solutions: &[Solution],
+    moving: bool,
+) {
+    // static rover: mean of the last 50 % (converged); moving rover: last solution
+    let half = solutions.len() / 2;
+    let (estimated, estimated_label) = if moving {
+        (
+            solutions.last().map(|s| s.pos_m).unwrap_or_default(),
+            "Baseline (last solution)",
+        )
+    } else {
+        (
+            mean_position(&solutions[half..]),
+            "Estimated baseline (last 50 %)",
+        )
+    };
+
+    let estimated_enu = ecef_to_enu_vector(base_ecef_m, sub3(estimated, base_ecef_m));
+    let estimated_length = norm3(sub3(estimated, base_ecef_m));
+
+    let (base_lat, base_long, base_alt) = degrees(base_ecef_m);
+
+    section.push(Block::Heading("RTK baseline".to_string()));
+    section.push(Block::Text(
+        "Differential navigation: the rover is positioned relative to the base, whose coordinates are fixed. The baseline is the base → rover vector, expressed in the local frame (east, north, up) of the base.".to_string(),
+    ));
+
+    let mut items = vec![
+        ("Base".to_string(), base.to_string()),
+        (
+            "Base position".to_string(),
+            format!(
+                "ECEF {:.3} {:.3} {:.3} m — {:.6}°, {:.6}°, {:.3} m",
+                base_ecef_m.0, base_ecef_m.1, base_ecef_m.2, base_lat, base_long, base_alt
+            ),
+        ),
+        (
+            estimated_label.to_string(),
+            format!(
+                "{:.3} m — east {:.3} m, north {:.3} m, up {:.3} m",
+                estimated_length, estimated_enu.0, estimated_enu.1, estimated_enu.2
+            ),
+        ),
+    ];
+
+    if moving {
+        let lengths = solutions
+            .iter()
+            .map(|s| norm3(sub3(s.pos_m, base_ecef_m)))
+            .collect::<Vec<_>>();
+        let (min, max) = lengths
+            .iter()
+            .fold((f64::MAX, f64::MIN), |(a, b), l| (a.min(*l), b.max(*l)));
+        items.push((
+            "Baseline length".to_string(),
+            format!("{:.1} → {:.1} m over the session", min, max),
+        ));
+    }
+
+    if let Some(reference) = reference_ecef_m {
+        let reference_enu = ecef_to_enu_vector(base_ecef_m, sub3(reference, base_ecef_m));
+        let reference_length = norm3(sub3(reference, base_ecef_m));
+        let error = sub3(estimated_enu, reference_enu);
+
+        items.push((
+            "Reference baseline".to_string(),
+            format!(
+                "{:.3} m — east {:.3} m, north {:.3} m, up {:.3} m",
+                reference_length, reference_enu.0, reference_enu.1, reference_enu.2
+            ),
+        ));
+        items.push((
+            "Baseline error (last 50 %)".to_string(),
+            format!(
+                "length {:+.3} m — east {:+.3} m, north {:+.3} m, up {:+.3} m ({:.1} ppm)",
+                estimated_length - reference_length,
+                error.0,
+                error.1,
+                error.2,
+                1.0E6 * norm3(error) / reference_length.max(1.0)
+            ),
+        ));
+    }
+
+    section.push(Block::KeyValue(items));
+
+    // map: base, rover track (time), baseline; world map
+    section.push(Block::Chart(trajectory_map(
+        "RTK: rover trajectory and base (color: minutes elapsed)",
+        rover,
+        origin,
+        solutions,
+        Some((base, base_ecef_m)),
+        Some(estimated),
+    )));
+    section.push(Block::Chart(locator(
+        rover,
+        solutions,
+        Some((base, base_ecef_m)),
+    )));
+
+    // local frame of the base (km)
+    let mut chart = Chart::xy(
+        "RTK baseline, local frame of the base",
+        "East (km)",
+        "North (km)",
+    )
+    .with_equal_axes();
+
+    let mut baseline = Series::new("baseline").connected();
+    baseline.push(0.0, 0.0);
+    baseline.push(estimated_enu.0 / 1.0E3, estimated_enu.1 / 1.0E3);
+    chart.push(baseline);
+
+    let mut rover_points = Series::new("rover solutions");
+    for s in solutions.iter() {
+        let enu = ecef_to_enu_vector(base_ecef_m, sub3(s.pos_m, base_ecef_m));
+        rover_points.push(enu.0 / 1.0E3, enu.1 / 1.0E3);
+    }
+    chart.push(rover_points);
+    section.push(Block::Chart(chart));
+
+    // baseline length over time
+    if moving && reference_ecef_m.is_none() {
+        let mut chart = Chart::time("Baseline length", "m", origin);
+        let mut series = Series::new("length");
+        for s in solutions.iter() {
+            series.push(
+                elapsed_s(origin, s.epoch),
+                norm3(sub3(s.pos_m, base_ecef_m)),
+            );
+        }
+        chart.push(series);
+        section.push(Block::Chart(chart));
+    }
+
+    if let Some(reference) = reference_ecef_m {
+        let reference_length = norm3(sub3(reference, base_ecef_m));
+        let mut chart = Chart::time("Baseline length error (estimated − reference)", "m", origin);
+        let mut series = Series::new("length error");
+        for s in solutions.iter() {
+            series.push(
+                elapsed_s(origin, s.epoch),
+                norm3(sub3(s.pos_m, base_ecef_m)) - reference_length,
+            );
+        }
+        chart.push(series);
+        section.push(Block::Chart(chart));
+    }
+}
+
 fn mean_position(solutions: &[Solution]) -> (f64, f64, f64) {
     let n = solutions.len().max(1) as f64;
     let (x, y, z) = solutions.iter().fold((0.0, 0.0, 0.0), |acc, s| {
@@ -101,6 +393,18 @@ impl Analysis for NavigationAnalysis {
         match &item.payload {
             QcOutput::PVTSolution(solution) => {
                 let pvt = &solution.solution;
+
+                let sky = self.skies.entry(solution.receiver.to_string()).or_default();
+                for contribution in pvt.sv.iter() {
+                    sky.seen(contribution.sv, pvt.epoch);
+                    sky.position(
+                        contribution.sv,
+                        pvt.epoch,
+                        contribution.azimuth_deg,
+                        contribution.elevation_deg,
+                    );
+                }
+
                 self.solutions
                     .entry(solution.receiver.to_string())
                     .or_default()
@@ -169,6 +473,15 @@ impl Analysis for NavigationAnalysis {
                             report.precise_orbits, report.broadcast_orbits
                         ),
                     ),
+                    (
+                        "Satellite clock states".to_string(),
+                        format!(
+                            "{} clock products, {} precise products, {} broadcast",
+                            report.precise_clocks,
+                            report.precise_state_clocks,
+                            report.broadcast_clocks
+                        ),
+                    ),
                 ]));
 
                 if !report.failures.is_empty() {
@@ -190,10 +503,14 @@ impl Analysis for NavigationAnalysis {
 
             // reference: rover reference position, otherwise the mean solution
             let is_rover = self.rover.as_deref() == Some(receiver.as_str());
+            let moving = is_rover && self.moving;
             let (reference, reference_label) = match (is_rover, self.reference_ecef_m) {
                 (true, Some(reference)) => (reference, "reference position"),
+                _ if moving => (first.pos_m, "first solution"),
                 _ => (mean_position(solutions), "mean position"),
             };
+            // moving rover: displacements, not errors
+            let errors = if moving { "Displacements" } else { "Errors" };
 
             let enu = solutions
                 .iter()
@@ -249,9 +566,14 @@ impl Analysis for NavigationAnalysis {
                 }
             }
 
+            if moving {
+                section.push(Block::Heading("Trajectory".to_string()));
+                section.push(Block::KeyValue(trajectory_summary(solutions)));
+            }
+
             section.push(Block::Heading(format!(
-                "Errors (relative to the {})",
-                reference_label
+                "{} (relative to the {})",
+                errors, reference_label
             )));
             let mut table = Table::new(&[
                 "Period",
@@ -268,7 +590,15 @@ impl Analysis for NavigationAnalysis {
             table.push(last_half.row("Last 50 %"));
             section.push(Block::Table(table));
 
-            let mut chart = Chart::time("Position errors", "m", origin);
+            let mut chart = Chart::time(
+                if moving {
+                    "Displacements"
+                } else {
+                    "Position errors"
+                },
+                "m",
+                origin,
+            );
             let mut series = [Series::new("East"), Series::new("North"), Series::new("Up")];
             for (s, (e, n, u)) in solutions.iter().zip(enu.iter()) {
                 let x = elapsed_s(origin, s.epoch);
@@ -281,8 +611,16 @@ impl Analysis for NavigationAnalysis {
             }
             section.push(Block::Chart(chart));
 
-            let mut chart =
-                Chart::xy("Horizontal errors", "East (m)", "North (m)").with_equal_axes();
+            let mut chart = Chart::xy(
+                if moving {
+                    "Horizontal displacements"
+                } else {
+                    "Horizontal errors"
+                },
+                "East (m)",
+                "North (m)",
+            )
+            .with_equal_axes();
             let mut horizontal = Series::new("solutions");
             for (e, n, _) in enu.iter() {
                 horizontal.push(*e, *n);
@@ -290,22 +628,49 @@ impl Analysis for NavigationAnalysis {
             chart.push(horizontal);
             section.push(Block::Chart(chart));
 
-            let mut chart =
-                Chart::xy("Trajectory", "Longitude (°)", "Latitude (°)").with_kind(ChartKind::Map);
-            let mut track = Series::new(receiver);
-            for s in solutions.iter() {
-                track.push(s.lat_long_alt.1, s.lat_long_alt.0);
-            }
-            chart.push(track);
-            section.push(Block::Chart(chart));
+            // RTK: the trajectory map is part of the baseline section
+            let rtk_base = match (is_rover, &self.base) {
+                (true, Some((base, Some(base_ecef_m)))) => Some((base.as_str(), *base_ecef_m)),
+                _ => None,
+            };
 
-            let mut chart = Chart::time("Receiver clock offset", "µs", origin);
-            let mut clock = Series::new("clock offset");
-            for s in solutions.iter() {
-                clock.push(elapsed_s(origin, s.epoch), s.clock_offset_s * 1.0E6);
+            if rtk_base.is_none() {
+                section.push(Block::Chart(trajectory_map(
+                    "Trajectory (color: minutes elapsed)",
+                    receiver,
+                    origin,
+                    solutions,
+                    None,
+                    None,
+                )));
+                section.push(Block::Chart(locator(receiver, solutions, None)));
             }
-            chart.push(clock);
-            section.push(Block::Chart(chart));
+
+            if let (true, Some((base, Some(base_ecef_m)))) = (is_rover, &self.base) {
+                baseline_section(
+                    &mut section,
+                    origin,
+                    base,
+                    *base_ecef_m,
+                    self.reference_ecef_m,
+                    receiver,
+                    solutions,
+                    moving,
+                );
+            }
+
+            // differential navigation: no receiver clock
+            let rtk = is_rover && self.base.is_some();
+
+            if !rtk {
+                let mut chart = Chart::time("Receiver clock offset", "µs", origin);
+                let mut clock = Series::new("clock offset");
+                for s in solutions.iter() {
+                    clock.push(elapsed_s(origin, s.epoch), s.clock_offset_s * 1.0E6);
+                }
+                chart.push(clock);
+                section.push(Block::Chart(chart));
+            }
 
             let mut chart = Chart::time("Dilution of precision", "DOP", origin);
             let mut dops = [
@@ -331,6 +696,15 @@ impl Analysis for NavigationAnalysis {
             let mut chart = Chart::time("Satellites used", "satellites", origin);
             chart.push(svs);
             section.push(Block::Chart(chart));
+
+            if let Some(sky) = self.skies.get(receiver) {
+                section.push(Block::Heading("Satellites".to_string()));
+                sky.push_blocks(
+                    &mut section,
+                    "Sky plot: satellites used by the solver",
+                    "Satellites used by the solver, over time",
+                );
+            }
 
             sections.push(section);
         }

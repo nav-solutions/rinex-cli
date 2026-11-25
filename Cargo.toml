@@ -1,6 +1,6 @@
 [package]
 name = "rinex-cli"
-version = "0.14.0"
+version = "0.15.0"
 license = "MPL-2.0"
 authors = ["Guillaume W. Bres <guillaume.bressaix@gmail.com>"]
 description = "GNSS data post processing and quality control, powered by GNSS-Qc"
@@ -31,24 +31,14 @@ ppp = ["navigation"]
 # CGGTTS solutions (cggtts command)
 cggtts = ["navigation", "gnss-qc/cggtts", "dep:cggtts"]
 
-# Ionospheric Pierce Points (ipp command)
-ionex = ["gnss-qc/ionex"]
+# IONEX: TEC maps (tec command), Ionospheric Pierce Points (ipp command)
+ionex = ["gnss-qc/ionex", "dep:ionex"]
 
 # Embeds the ANISE dataset at build time: no Internet access at runtime
 embed_ephem = ["navigation", "gnss-qc/embed_ephem"]
 
 # PDF reports (Typst engine, embedded fonts)
 pdf = ["dep:typst-as-lib", "dep:typst-pdf", "dep:typst-layout"]
-
-[dependencies.gnss-qc]
-version = "0.6"
-default-features = false
-features = [
-    "sp3",
-    "flate2",
-    "serde",
-    "log",
-]
 
 [dependencies.rinex]
 version = "0.25.0-alpha"
@@ -62,18 +52,6 @@ features = [
     "serde",
     "flate2",
 ]
-
-[dependencies.sp3]
-version = "1.5"
-features = [
-    "qc",
-    "processing",
-    "flate2",
-]
-
-[dependencies.cggtts]
-version = "4"
-optional = true
 
 [dependencies.typst-as-lib]
 version = "0.18"
@@ -91,10 +69,17 @@ thiserror = "2"
 itertools = "0.14"
 maud = "0.26"
 serde_json = "1"
+cggtts = { version = "4", optional = true }
+gnss-rs = { version = "2", features = ["serde"] }
 serde = { version = "1", features = ["derive"] }
 clap = { version = "4.4", features = ["derive", "color", "env", "wrap_help"] }
-gnss-qc-traits = { version = "0.6", features = ["processing"] }
-gnss-rs = { version = "2", features = ["serde"] }
 hifitime = { version = "4", features = ["serde", "std"] }
 typst-pdf = { version = "0.15", optional = true }
 typst-layout = { version = "0.15", optional = true }
+
+sp3 = { version = "1.5", features = ["qc", "processing", "flate2"] }
+
+ionex = { version = "0.2", optional = true, default-features = false, features = ["flate2"] }
+
+gnss-qc-traits = { version = "0.6", features = ["processing"] }
+gnss-qc = { version = "0.8", default-features = false, features = ["sp3", "flate2", "serde", "log"] }

@@ -113,6 +113,45 @@ impl Consumer for CsvSink {
                     residual.rhs_epoch,
                 )?;
             },
+            QcOutput::Combination(c) => {
+                let fd = self.file(
+                    "combinations",
+                    "epoch,receiver,sv,combination,lhs,rhs,value_m,arc,debiased_m",
+                )?;
+                writeln!(
+                    fd,
+                    "{},{},{},{},{},{},{},{},{}",
+                    epoch,
+                    field(&c.receiver.to_string()),
+                    c.sv,
+                    c.kind,
+                    c.lhs,
+                    c.rhs,
+                    c.value_m,
+                    opt(&c.arc),
+                    opt(&c.debiased_m),
+                )?;
+            },
+            QcOutput::MultipathArc(arc) => {
+                let fd = self.file(
+                    "multipath_arcs",
+                    "receiver,sv,code,phase,arc,start,end,samples,mean_m,rms_m",
+                )?;
+                writeln!(
+                    fd,
+                    "{},{},{},{},{},{},{},{},{},{}",
+                    field(&arc.receiver.to_string()),
+                    arc.sv,
+                    arc.code,
+                    arc.phase,
+                    arc.arc,
+                    arc.start,
+                    arc.end,
+                    arc.samples,
+                    arc.mean_m,
+                    arc.rms_m,
+                )?;
+            },
             QcOutput::OrbitResidual(residual) => {
                 let fd = self.file(
                     "orbit_residuals",
@@ -226,6 +265,82 @@ impl Consumer for CsvSink {
                     ipp.longitude_deg,
                     ipp.altitude_km,
                     ipp.obliquity_factor,
+                )?;
+            },
+            QcOutput::ClockResidual(residual) => {
+                let fd = self.file(
+                    "clock_residuals",
+                    "epoch,clock,lhs_kind,lhs_source,rhs_kind,rhs_source,residual_s,datum_s,aligned_s",
+                )?;
+                writeln!(
+                    fd,
+                    "{},{},{:?},{},{:?},{},{:e},{},{}",
+                    epoch,
+                    field(&residual.clock.to_string()),
+                    residual.lhs_kind,
+                    field(&residual.lhs_source.to_string()),
+                    residual.rhs_kind,
+                    field(&residual.rhs_source.to_string()),
+                    residual.residual_s,
+                    residual
+                        .datum_s
+                        .map(|dt| format!("{:e}", dt))
+                        .unwrap_or_default(),
+                    residual
+                        .aligned_s()
+                        .map(|dt| format!("{:e}", dt))
+                        .unwrap_or_default(),
+                )?;
+            },
+            QcOutput::Meteo(sample) => {
+                let fd = self.file("meteo", "epoch,source,observable,value")?;
+                writeln!(
+                    fd,
+                    "{},{},{},{}",
+                    epoch,
+                    field(&sample.source.to_string()),
+                    sample.observable,
+                    sample.value,
+                )?;
+            },
+            QcOutput::TecMap(stats) => {
+                let fd = self.file(
+                    "tec_maps",
+                    "epoch,source,region,interpolated,nodes,mean_tecu,std_tecu,min_tecu,max_tecu,max_latitude_deg,max_longitude_deg",
+                )?;
+                writeln!(
+                    fd,
+                    "{},{},{},{},{},{:.3},{:.3},{:.3},{:.3},{},{}",
+                    epoch,
+                    field(&stats.source.to_string()),
+                    field(&stats.region),
+                    stats.interpolated,
+                    stats.nodes,
+                    stats.mean_tecu,
+                    stats.std_tecu,
+                    stats.min_tecu,
+                    stats.max_tecu,
+                    stats.max_latitude_deg,
+                    stats.max_longitude_deg,
+                )?;
+            },
+            QcOutput::TecPoint(node) if self.raw => {
+                let fd = self.file(
+                    "tec_points",
+                    "epoch,source,interpolated,latitude_deg,longitude_deg,altitude_km,tecu,rms_tecu",
+                )?;
+                let p = &node.point;
+                writeln!(
+                    fd,
+                    "{},{},{},{},{},{},{:.3},{}",
+                    epoch,
+                    field(&node.source.to_string()),
+                    node.interpolated,
+                    p.latitude_deg,
+                    p.longitude_deg,
+                    p.altitude_km,
+                    p.tecu,
+                    opt(&p.rms_tecu),
                 )?;
             },
             // end of session summaries: see summary.json

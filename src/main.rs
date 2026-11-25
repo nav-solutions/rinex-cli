@@ -8,6 +8,7 @@ mod index;
 mod input;
 mod report;
 mod sink;
+mod snap;
 mod summary;
 mod workspace;
 
@@ -25,9 +26,8 @@ use workspace::Workspace;
 fn init_logger(cli: &Cli) {
     let level = if cli.outputs.quiet { "warn" } else { "info" };
 
-    // gnss-qc v0.6 logs a spurious error on every file it indexes
-    // (eager evaluation of the file stem error path): silenced.
-    let filter = format!("{},gnss_qc::io::input::product=off", level);
+    // the navigation solver reports every rejected candidate (info): warnings only
+    let filter = format!("{},gnss_rtk=warn", level);
 
     Builder::from_env(Env::default().default_filter_or(filter))
         .target(Target::Stderr)

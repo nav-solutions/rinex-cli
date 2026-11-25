@@ -10,20 +10,34 @@ RINEX-Cli
 
 `rinex-cli` is the reference application of the [NAV-Solutions framework](https://github.com/nav-solutions):
 it deploys the [GNSS-Qc](https://github.com/nav-solutions/gnss-qc) engine on your data
-and presents the results as data files and reports.
+and presents the results as data files and reports. It is dedicated to post-processing,
+not real-time navigation, and emphasizes a fraction of what `gnss-qc` offers:
 
 ```text
  RINEX, CRINEX, SP3 ─► indexing ─► GNSS-Qc engine ─► output stream ─┬─► data/*.csv, results.jsonl, stdout
- (gzip or not)        (receivers,   (synchronization,               ├─► CGGTTS, GPX, KML
+ IONEX                (receivers,   (synchronization,               ├─► CGGTTS, GPX, KML, IONEX
+ (gzip or not)
                        agencies,     quality control,               ├─► summary.json
                        aliases)      navigation..)                  └─► report.html, report.pdf
 ```
 
-- Quality control: sampling, data gaps, signal strength, lock losses, ephemeris coverage
-- Post processed navigation: SPP, CPP, PPP, RTK (`navigation` feature)
-- CGGTTS solutions: common view time transfer (`cggtts` feature)
-- Residual analysis: receiver A − receiver B, orbital product A − product B
-- Ionospheric Pierce Points (`ionex` feature)
+- Quality control: sampling, data gaps, signal strength, lock losses, ephemeris coverage,
+  sky plot and satellite visibility timeline. The reports of the processing commands
+  (`nav`, `cggtts`, `ipp`, `residuals obs`, `combinations`) end with the same quality control of their observations
+- Post processed navigation: SPP, CPP, PPP (`navigation` feature)
+- RTK (differential) navigation: RTK-SPP, RTK-CPP, RTK-PPP, with the baseline in the report
+- Navigation reports: trajectory map (OpenStreetMap in HTML, local plan in PDF), world map,
+  sky plot and visibility timeline of the satellites used
+- CGGTTS solutions: common view time transfer (`cggtts` feature), tracks in the sky
+- Residual analysis: receiver A − receiver B, orbital product A − product B,
+  clock product A − product B (two analysis centers)
+- Meteo sensors analysis (Meteo RINEX)
+- Signal combinations: Geometry Free (ionosphere), Ionosphere Free and code multipath,
+  for every pair of frequencies, per constellation. Also part of the navigation reports
+  (rover, and base in RTK) and of the CGGTTS reports
+- TEC maps analysis, temporal interpolation and IONEX synthesis (`ionex` feature)
+- Ionospheric Pierce Points (`ionex` feature): regional and world maps of the pierce points,
+  vertical TEC at the pierce points (IONEX), lines of sight
 - File operations: filegen, merge, split, tbin, cbin, diff
 
 ## Install
@@ -38,7 +52,7 @@ cargo install rinex-cli --all-features
 |---------|-------------|
 | `navigation` | `nav` command: P.V.T solutions (GNSS-RTK). The heaviest option. `ppp` is a legacy alias |
 | `cggtts` | `cggtts` command (implies `navigation`) |
-| `ionex` | `ipp` command |
+| `ionex` | IONEX inputs: `tec` and `ipp` commands |
 | `embed_ephem` | Embeds the ANISE dataset at build time: no Internet access at runtime |
 | `pdf` | PDF reports (Typst engine, embedded fonts) |
 
@@ -74,8 +88,8 @@ WORKSPACE/ESBC00DNK_R_20201770000_01D_30S_MO/
 ## Inputs and indexing
 
 Files are loaded with `-f FILE` and `-d DIRECTORY` (recursive, `--depth`), as many times as needed.
-RINEX, CRINEX and SP3 are supported, gzip compressed or not (detected from the content:
-file names do not matter).
+RINEX (observation, navigation, meteo, clock), CRINEX, SP3 and IONEX (`ionex` feature)
+are supported, gzip compressed or not (detected from the content: file names do not matter).
 
 Every file is identified (*indexed*) by GNSS-Qc. Files that share the same identity and type
 are merged. Default identities:
@@ -83,11 +97,13 @@ are merged. Default identities:
 | Product | Identity |
 |---------|----------|
 | Observations | `receiver:MODEL #SERIAL`, otherwise antenna, operator, file name |
-| Navigation, meteo, clock | `agency:NAME`, otherwise file name |
+| Navigation, meteo | `agency:NAME`, otherwise file name |
+| Clock | `agency:NAME`, otherwise analysis center code (`agency:GRG`, `agency:COM`), otherwise file name |
 | SP3 | `agency:NAME`, otherwise file name |
+| IONEX | `agency:NAME` (`RUN BY`), otherwise file name |
 
 Customize the indexing per product type with `--obs-index`, `--nav-index`, `--sp3-index`,
-`--meteo-index`, `--clk-index` (`receiver`, `antenna`, `operator`, `agency`, `filename`, `auto`,
+`--meteo-index`, `--clk-index`, `--ionex-index` (`receiver`, `antenna`, `operator`, `agency`, `filename`, `auto`,
 `alias:NAME`), or give an alias to a file or a directory: `-f ALIAS=FILE`, `-d ALIAS=DIR`.
 `--input-cfg cfg.json` loads the preferences (`QcInputConfig`) from a file.
 
@@ -105,6 +121,11 @@ rinex-cli -f rap=RAP.SP3 -f fin=FIN.SP3 residuals orbit --lhs sp3:rap --rhs sp3:
 rinex-cli --sp3-index filename -f FIN.SP3 -f RAP.SP3 index
 ```
 
+Low cost receivers time tag their observations a few milliseconds off the second: `--snap-epochs`
+moves the epochs to the nearest second (and corrects the observations), `--align-sampling 30s` keeps
+the epochs of a 30 s reference station. Both are required to combine such a receiver with a reference
+station (RTK), see [Preprocessor](documentation/Preprocessor.md#aligning-epochs-low-cost-receivers).
+
 Products are designated by their identity, as printed by `index`
 (`--rover "receiver:SEPT POLARX5 #3047937"`, `--lhs agency:GRGS`), or by name when unique.
 
@@ -119,13 +140,21 @@ Preprocessing (`-G -R -E -C -J -I -S --CG`, `-P FILTER`, `-z`) applies to each f
 | `--session NAME` | Session subfolder (default: primary file name) |
 | `--report html,pdf,none` | Report formats (default `html`) |
 | `--data csv,jsonl,none` | Data formats (default `csv`) |
-| `--raw` | Also export the raw signal observations |
+| `--raw` | Also export the raw signal observations and TEC map nodes |
 | `--stdout` | Stream the results on stdout (JSON lines), logs go to stderr |
+| `--no-qc` | Processing commands: no quality control of the observations in the report |
 | `--title`, `--open`, `-q` | Report title, open the report, quiet |
 
 The HTML report is a single interactive page (plotly.js is loaded from its CDN). The PDF report
 is static: it is meant to be archived, printed or delivered. Both are built from the same report
-model. The JSON lines deserialize into `gnss_qc::prelude::QcOutputItem` (serde feature).
+model. The HTML maps load their tiles from OpenStreetMap, and the coast lines of the
+world and regional maps from the plotly CDN: they need a network access. The PDF maps are self
+contained (Natural Earth land masses).
+
+The report of a processing command presents its results first (navigation solutions, CGGTTS
+tracks, pierce points..), then the quality control of the observations it processed, as the `qc`
+command would: a `nav` report is a `qc` report completed by the solutions. `--no-qc` skips that
+part (faster on long sessions). The JSON lines deserialize into `gnss_qc::prelude::QcOutputItem` (serde feature).
 
 ## Commands
 
@@ -133,11 +162,15 @@ model. The JSON lines deserialize into `gnss_qc::prelude::QcOutputItem` (serde f
 |---------|-------------|
 | `index` | Lists the input products, as indexed (`--json`) |
 | `qc` | Quality control of the signal sources |
-| `nav` | P.V.T solutions: `--method spp\|cpp\|ppp`, `--rover`, `--base` (RTK), `--orbits auto\|precise\|broadcast`, `-c gps,gal`, `--profile`, `--static`, `--clock`, `--apriori`, `--reference`, `--cfg nav.json`, `--anise-dir`, `--gpx`, `--kml` |
-| `cggtts` | CGGTTS solutions, same navigation options + `--station`, `--frame`, `--min-track`, `--solutions` |
+| `nav` | P.V.T solutions: `--method spp\|cpp\|ppp`, `--rover`, `--base` / `--base-position` (RTK), `--orbits auto\|precise\|broadcast`, `-c gps,gal`, `--profile`, `--static`, `--clock`, `--apriori`, `--reference`, `--cfg nav.json`, `--anise-dir`, `--gpx`, `--kml`, `--no-combinations`. See [navigation](documentation/PPP.md) and [RTK](documentation/RTK.md) |
+| `cggtts` | CGGTTS solutions, same navigation options + `--station`, `--frame`, `--min-track`, `--solutions`, `--no-combinations` |
 | `residuals obs` | Receiver A − receiver B: `--lhs`, `--rhs`, `--all`, `--tolerance` |
 | `residuals orbit` | Product A − product B: `--lhs`, `--rhs` (`sp3`, `sp3:PRODUCT`, `nav`, `nav:PRODUCT`), `--sampling`, `--max-age`, `-c` |
-| `ipp` | Ionospheric Pierce Points: `--elevation-mask`, `--shell-altitude`, `--orbits`, `-c` |
+| `residuals clock` | Clock product A − product B: `--lhs`, `--rhs` (`clk`, `clk:PRODUCT`, `sp3`, `sp3:PRODUCT`, `nav`, `nav:PRODUCT`), `--sampling`, `--alignment`, `--satellites-only`, `--stations-only`, `-c`. See [clock residuals](documentation/ClockResiduals.md) |
+| `meteo` | Meteo sensors: statistics and time series (`--observables`). See [meteo](documentation/Meteo.md) |
+| `combinations` (`comb`) | Signal combinations: Geometry Free, Ionosphere Free, code multipath (`--gf`, `--if`, `--mp`, `--code-only`, `--phase-only`, `-c`, `--receivers`, `--max-gap`, `--jump`). See [signal combinations](documentation/Combinations.md) |
+| `tec` | TEC maps (IONEX): statistics per region (`--region`), temporal interpolation (`--upsample`, `--resample`, `--interpolation`), IONEX synthesis (`--no-ionex`, `--gzip`). See [TEC maps](documentation/TEC.md) |
+| `ipp` | Ionospheric Pierce Points: `--elevation-mask`, `--shell-altitude`, `--orbits`, `-c`. See [pierce points](documentation/IPP.md) |
 | `filegen` | Writes the (preprocessed) products as RINEX / SP3 |
 | `merge FILE` | Merges a file into the product of the same kind |
 | `split EPOCH` | Splits the products at this epoch |
@@ -166,7 +199,7 @@ local files with `--anise-dir DIR` (`$GNSS_QC_ANISE_DIR`): `de440s.bsp` and `pck
 | `ppp` | `nav --method spp\|cpp\|ppp` |
 | `rtk --fp BASE` | `-f base=BASE nav --base base` |
 | `ppp --cggtts` | `cggtts` |
-| `ppp -c cfg.json` (GNSS-RTK `Config`) | `nav --cfg nav.json` (GNSS-Qc `QcNavigationConfig`) |
+| `ppp -c cfg.json` (GNSS-RTK `Config`) | `nav --cfg nav.json` (GNSS-Qc `QcNavigationConfig`, may be partial: wrap the former content in `{ "solver": .. }`) |
 | `--nav healthy` | not supported yet |
 | `filegen --csv` | `qc --raw --data csv` |
 

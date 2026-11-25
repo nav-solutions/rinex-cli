@@ -42,7 +42,7 @@ impl JsonlSink {
 impl Consumer for JsonlSink {
     fn consume(&mut self, item: &QcOutputItem) -> Result<(), Error> {
         let skip = match &item.payload {
-            QcOutput::Signal(_) => !self.raw,
+            QcOutput::Signal(_) | QcOutput::TecPoint(_) => !self.raw,
             // ephemeris frames do not round trip (serde)
             QcOutput::Ephemeris(_) => true,
             _ => false,

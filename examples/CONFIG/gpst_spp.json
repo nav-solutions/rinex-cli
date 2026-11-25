@@ -1,4 +1,6 @@
 {
-    "method": "SPP",
-    "timescale": "GPST"
+    "solver": {
+        "method": "SPP",
+        "timescale": "GPST"
+    }
 }

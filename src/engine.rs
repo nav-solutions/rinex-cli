@@ -1,18 +1,19 @@
 //! Deploys the GNSS-Qc engine for the selected command, and dispatches the
 //! output stream to every consumer (data files, dedicated formats, reports).
-use std::time::Instant;
+use std::{str::FromStr, time::Instant};
 
 use log::{info, warn};
 
 use gnss_qc::prelude::{
-    Duration, Epoch, QcEngine, QcEngineBuilder, QcEphemerisCoverageProcessor,
-    QcObservationResidualConfig, QcObservationResidualProcessor, QcOrbitProduct,
-    QcOrbitResidualConfig, QcOrbitResidualProcessor, QcOutput, QcOutputItem, QcPoll,
-    QcSignalProcessor,
+    Duration, Epoch, QcClockAlignment, QcClockProduct, QcClockResidualConfig,
+    QcClockResidualProcessor, QcEngine, QcEngineBuilder, QcEphemerisCoverageProcessor,
+    QcEphemerisProcessor, QcMeteoConfig, QcMeteoProcessor, QcObservationResidualConfig,
+    QcObservationResidualProcessor, QcOrbitProduct, QcOrbitResidualConfig,
+    QcOrbitResidualProcessor, QcOutput, QcOutputItem, QcPoll, QcSignalProcessor,
 };
 
 use crate::{
-    cli::{parse_constellations, Cli, Command, ResidualsKind},
+    cli::{parse_constellations, AlignmentArg, Cli, Command, ResidualsKind},
     error::Error,
     input::{Inputs, ProductEntry, ProductKind},
     report::{Formats, ReportSink},
@@ -45,12 +46,69 @@ pub struct SessionContext {
     /// Navigation context
     #[cfg(feature = "navigation")]
     pub navigation: Option<crate::nav::NavigationSetup>,
+
+    /// Quality control of the observations deployed (signal sources, sky view)
+    pub qc: bool,
+
+    /// Signal combinations deployed next to a processing command (navigation)
+    pub combinations: bool,
 }
 
 /// Engine and consumers, ready to run
 pub struct Plan {
     pub engine: QcEngine<QcOutput>,
     pub consumers: Vec<Box<dyn Consumer>>,
+}
+
+/// Signal combinations (GF, IF, code multipath) of the navigated signal sources
+#[cfg(feature = "navigation")]
+fn with_combinations(
+    builder: QcEngineBuilder<QcOutput>,
+    cfg: gnss_qc::prelude::QcCombinationConfig,
+    setup: &mut Vec<(String, String)>,
+) -> QcEngineBuilder<QcOutput> {
+    setup.push((
+        "Signal combinations".to_string(),
+        format!(
+            "GF, IF, MP: {}",
+            cfg.receivers
+                .iter()
+                .map(|r| r.to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+    ));
+    builder.with_processor(gnss_qc::prelude::QcCombinationProcessor::new(cfg))
+}
+
+/// Quality control of the observations: signal sources, and with navigation RINEX,
+/// ephemeris coverage and broadcast ephemerides (sky view).
+/// Returns false when there is no observation to analyze.
+fn with_qc(
+    builder: QcEngineBuilder<QcOutput>,
+    inputs: &Inputs,
+    coverage: bool,
+    setup: &mut Vec<(String, String)>,
+) -> (QcEngineBuilder<QcOutput>, bool) {
+    if inputs.entries(ProductKind::Observation).next().is_none() {
+        return (builder, false);
+    }
+
+    let mut builder = builder.with_processor(QcSignalProcessor);
+
+    if coverage {
+        if inputs.entries(ProductKind::Navigation).next().is_some() {
+            builder = builder
+                .with_processor(QcEphemerisCoverageProcessor::default())
+                // broadcast ephemerides, for the sky plots
+                .with_processor(QcEphemerisProcessor::default());
+            setup.push(("Ephemeris coverage".to_string(), "yes".to_string()));
+        } else {
+            warn!("no navigation RINEX: ephemeris coverage and sky view are not analyzed");
+        }
+    }
+
+    (builder, true)
 }
 
 fn builder(cli: &Cli, inputs: &mut Inputs) -> QcEngineBuilder<QcOutput> {
@@ -97,6 +155,48 @@ fn orbit_product(text: &str, inputs: &Inputs) -> Result<QcOrbitProduct, Error> {
     }
 }
 
+/// Parses a clock product designation: clk, clk:PRODUCT, sp3, sp3:PRODUCT, nav, nav:PRODUCT
+fn clock_product(text: &str, inputs: &Inputs) -> Result<QcClockProduct, Error> {
+    let (kind, product) = match text.split_once(':') {
+        Some((kind, product)) => (kind, Some(product)),
+        None => (text, None),
+    };
+
+    match kind.to_lowercase().as_str() {
+        "clk" | "clock" => Ok(QcClockProduct::Clock(
+            product
+                .map(|p| inputs.resolve(p, ProductKind::Clock))
+                .transpose()?,
+        )),
+        "sp3" | "precise" => Ok(QcClockProduct::PreciseState(
+            product
+                .map(|p| inputs.resolve(p, ProductKind::SP3))
+                .transpose()?,
+        )),
+        "nav" | "brdc" | "broadcast" => Ok(QcClockProduct::Broadcast(
+            product
+                .map(|p| inputs.resolve(p, ProductKind::Navigation))
+                .transpose()?,
+        )),
+        _ => Err(Error::Config(format!(
+            "invalid clock product \"{}\": clk, clk:PRODUCT, sp3, sp3:PRODUCT, nav or nav:PRODUCT",
+            text
+        ))),
+    }
+}
+
+fn describe_clock_product(product: &QcClockProduct) -> String {
+    let kind = match product {
+        QcClockProduct::Clock(_) => "Clock RINEX",
+        QcClockProduct::PreciseState(_) => "SP3",
+        QcClockProduct::Broadcast(_) => "broadcast",
+    };
+    match product.source() {
+        Some(id) => format!("{} ({})", kind, id),
+        None => format!("{} (any)", kind),
+    }
+}
+
 fn describe_orbit_product(product: &QcOrbitProduct) -> String {
     match product {
         QcOrbitProduct::Precise(Some(id)) => format!("precise ({})", id),
@@ -114,6 +214,12 @@ pub fn plan(cli: &Cli, mut inputs: Inputs, workspace: &Workspace) -> Result<Plan
     #[cfg(feature = "navigation")]
     let mut navigation = None;
 
+    // quality control of the observations, in the reports of the processing commands
+    let qc = !cli.outputs.no_qc;
+    let mut qc_deployed = false;
+    #[allow(unused_mut)]
+    let mut combinations_deployed = false;
+
     let (command, engine) = match &cli.command {
         Command::Index(_)
         | Command::Filegen(_)
@@ -124,23 +230,11 @@ pub fn plan(cli: &Cli, mut inputs: Inputs, workspace: &Workspace) -> Result<Plan
         | Command::Diff(_) => unreachable!("this command does not deploy the engine"),
 
         Command::Qc(args) => {
-            let mut builder = builder(cli, &mut inputs);
+            let builder = builder(cli, &mut inputs);
+            let (builder, _) = with_qc(builder, &inputs, !args.no_coverage, &mut setup);
+            qc_deployed = true;
 
-            let has_nav = inputs.entries(ProductKind::Navigation).next().is_some();
-
-            if !args.no_coverage {
-                if has_nav {
-                    builder = builder.with_processor(QcEphemerisCoverageProcessor::default());
-                    setup.push(("Ephemeris coverage".to_string(), "yes".to_string()));
-                } else {
-                    warn!("no navigation RINEX: ephemeris coverage is not analyzed");
-                }
-            }
-
-            let engine = builder
-                .with_processor(QcSignalProcessor)
-                .build()
-                .map_err(engine_error)?;
+            let engine = builder.build().map_err(engine_error)?;
 
             ("qc", engine)
         },
@@ -163,13 +257,23 @@ pub fn plan(cli: &Cli, mut inputs: Inputs, workspace: &Workspace) -> Result<Plan
 
             let almanac = crate::nav::almanac(args.navigation.anise_dir.as_deref())?;
 
+            let combination_cfg = crate::nav::combinations(&cfg);
+
             let processor = QcNavigationProcessor::new(almanac, cfg)
                 .map_err(|e| Error::Navigation(e.to_string()))?;
 
-            let engine = builder(cli, &mut inputs)
-                .with_processor(processor)
-                .build()
-                .map_err(engine_error)?;
+            let mut builder = builder(cli, &mut inputs).with_processor(processor);
+
+            // signal combinations of the navigated signal sources
+            if !args.no_combinations {
+                builder = with_combinations(builder, combination_cfg, &mut setup);
+                combinations_deployed = true;
+            }
+
+            if qc {
+                (builder, qc_deployed) = with_qc(builder, &inputs, true, &mut setup);
+            }
+            let engine = builder.build().map_err(engine_error)?;
 
             if args.gpx {
                 consumers.push(Box::new(TrackSink::new(workspace, TrackFormat::Gpx)));
@@ -213,13 +317,23 @@ pub fn plan(cli: &Cli, mut inputs: Inputs, workspace: &Workspace) -> Result<Plan
 
             let almanac = crate::nav::almanac(args.navigation.anise_dir.as_deref())?;
 
+            let combination_cfg = crate::nav::combinations(&cfg);
+
             let processor = QcCggttsProcessor::new(almanac, cfg, cggtts_cfg)
                 .map_err(|e| Error::Navigation(e.to_string()))?;
 
-            let engine = builder(cli, &mut inputs)
-                .with_processor(processor)
-                .build()
-                .map_err(engine_error)?;
+            let mut builder = builder(cli, &mut inputs).with_processor(processor);
+
+            // signal combinations of the receiver
+            if !args.no_combinations {
+                builder = with_combinations(builder, combination_cfg, &mut setup);
+                combinations_deployed = true;
+            }
+
+            if qc {
+                (builder, qc_deployed) = with_qc(builder, &inputs, true, &mut setup);
+            }
+            let engine = builder.build().map_err(engine_error)?;
 
             // station: user, marker name, receiver identity
             let station = args.station.clone().unwrap_or_else(|| {
@@ -300,10 +414,12 @@ pub fn plan(cli: &Cli, mut inputs: Inputs, workspace: &Workspace) -> Result<Plan
                         .unwrap_or("other signal source".to_string()),
                 ));
 
-                let engine = builder(cli, &mut inputs)
-                    .with_processor(QcObservationResidualProcessor::new(cfg))
-                    .build()
-                    .map_err(engine_error)?;
+                let mut builder = builder(cli, &mut inputs)
+                    .with_processor(QcObservationResidualProcessor::new(cfg));
+                if qc {
+                    (builder, qc_deployed) = with_qc(builder, &inputs, true, &mut setup);
+                }
+                let engine = builder.build().map_err(engine_error)?;
 
                 ("residuals obs", engine)
             },
@@ -331,6 +447,258 @@ pub fn plan(cli: &Cli, mut inputs: Inputs, workspace: &Workspace) -> Result<Plan
 
                 ("residuals orbit", engine)
             },
+            ResidualsKind::Clock(args) => {
+                let lhs = clock_product(&args.lhs, &inputs)?;
+                let rhs = clock_product(&args.rhs, &inputs)?;
+
+                setup.push(("A".to_string(), describe_clock_product(&lhs)));
+                setup.push(("B".to_string(), describe_clock_product(&rhs)));
+
+                let mut cfg = QcClockResidualConfig::new(lhs, rhs);
+                cfg.sampling = args.sampling.map(Duration::from_seconds);
+                cfg.alignment = match args.alignment {
+                    AlignmentArg::None => QcClockAlignment::None,
+                    AlignmentArg::Epoch => QcClockAlignment::Epoch,
+                    AlignmentArg::Constellation => QcClockAlignment::Constellation,
+                };
+
+                if args.satellites_only {
+                    cfg = cfg.satellites_only();
+                }
+                if args.stations_only {
+                    cfg = cfg.stations_only();
+                }
+
+                if !args.constellations.is_empty() {
+                    cfg = cfg.with_constellations(&parse_constellations(&args.constellations)?);
+                }
+
+                setup.push((
+                    "Clock datum".to_string(),
+                    format!("{:?}", cfg.alignment),
+                ));
+
+                if let Some(dt) = cfg.sampling {
+                    setup.push(("Sampling".to_string(), dt.to_string()));
+                }
+
+                let engine = builder(cli, &mut inputs)
+                    .with_processor(QcClockResidualProcessor::new(cfg))
+                    .build()
+                    .map_err(engine_error)?;
+
+                ("residuals clock", engine)
+            },
+        },
+
+        Command::Combinations(args) => {
+            use gnss_qc::prelude::{QcCombinationConfig, QcCombinationKind, QcCombinationProcessor};
+
+            if inputs.entries(ProductKind::Observation).next().is_none() {
+                return Err(Error::Config(
+                    "signal combinations require observations".to_string(),
+                ));
+            }
+
+            let all = !args.gf && !args.iono_free && !args.mp;
+
+            let mut cfg = QcCombinationConfig {
+                geometry_free: all || args.gf,
+                ionosphere_free: all || args.iono_free,
+                multipath: all || args.mp,
+                code: !args.phase_only,
+                phase: !args.code_only,
+                max_gap: Duration::from_seconds(args.max_gap),
+                jump_threshold_m: args.jump,
+                ..Default::default()
+            };
+
+            if !args.constellations.is_empty() {
+                cfg.constellations = parse_constellations(&args.constellations)?;
+            }
+
+            for receiver in args.receivers.iter() {
+                cfg.receivers
+                    .push(inputs.resolve(receiver, ProductKind::Observation)?);
+            }
+
+            let kinds = [
+                (cfg.geometry_free, QcCombinationKind::GeometryFree),
+                (cfg.ionosphere_free, QcCombinationKind::IonosphereFree),
+                (cfg.multipath, QcCombinationKind::Multipath),
+            ]
+            .iter()
+            .filter(|(selected, _)| *selected)
+            .map(|(_, kind)| kind.to_string())
+            .collect::<Vec<_>>();
+
+            setup.push(("Combinations".to_string(), kinds.join(", ")));
+            setup.push((
+                "Measurements (GF, IF)".to_string(),
+                match (cfg.code, cfg.phase) {
+                    (true, true) => "code and phase",
+                    (true, false) => "code",
+                    _ => "phase",
+                }
+                .to_string(),
+            ));
+            if cfg.multipath {
+                setup.push((
+                    "Multipath arcs".to_string(),
+                    format!(
+                        "loss of lock, gaps > {} s, jumps > {} m",
+                        args.max_gap, args.jump
+                    ),
+                ));
+            }
+            if !cfg.constellations.is_empty() {
+                setup.push((
+                    "Constellations".to_string(),
+                    cfg.constellations
+                        .iter()
+                        .map(|c| c.to_string())
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                ));
+            }
+            if !cfg.receivers.is_empty() {
+                setup.push((
+                    "Signal sources".to_string(),
+                    cfg.receivers
+                        .iter()
+                        .map(|r| r.to_string())
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                ));
+            }
+
+            let mut builder =
+                builder(cli, &mut inputs).with_processor(QcCombinationProcessor::new(cfg));
+            if qc {
+                (builder, qc_deployed) = with_qc(builder, &inputs, true, &mut setup);
+            }
+            let engine = builder.build().map_err(engine_error)?;
+
+            ("combinations", engine)
+        },
+
+        Command::Meteo(args) => {
+            if inputs.entries(ProductKind::Meteo).next().is_none() {
+                return Err(Error::Config(
+                    "the meteo command requires Meteo RINEX".to_string(),
+                ));
+            }
+
+            let mut cfg = QcMeteoConfig::default();
+
+            if !args.observables.is_empty() {
+                let observables = args
+                    .observables
+                    .iter()
+                    .map(|code| {
+                        rinex::prelude::Observable::from_str(code.trim()).map_err(|_| {
+                            Error::Config(format!("unknown meteo observable \"{}\"", code))
+                        })
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+
+                setup.push((
+                    "Observables".to_string(),
+                    observables
+                        .iter()
+                        .map(|o| o.to_string())
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                ));
+
+                cfg = cfg.with_observables(&observables);
+            }
+
+            let engine = builder(cli, &mut inputs)
+                .with_processor(QcMeteoProcessor::new(cfg))
+                .build()
+                .map_err(engine_error)?;
+
+            ("meteo", engine)
+        },
+
+        #[cfg(not(feature = "ionex"))]
+        Command::Tec(_) => {
+            return Err(Error::Config(
+                "rinex-cli was built without the \"ionex\" feature: cargo install rinex-cli --features ionex".to_string(),
+            ))
+        },
+
+        #[cfg(feature = "ionex")]
+        Command::Tec(args) => {
+            use crate::cli::InterpolationArg;
+            use gnss_qc::prelude::{QcTecConfig, QcTecInterpolation, QcTecProcessor, QcTecSampling};
+
+            if inputs.entries(ProductKind::Ionex).next().is_none() {
+                return Err(Error::Config(
+                    "the tec command requires IONEX files".to_string(),
+                ));
+            }
+
+            let mut cfg = QcTecConfig::default().with_points();
+
+            cfg.interpolation = match args.interpolation {
+                InterpolationArg::Nearest => QcTecInterpolation::NearestMap,
+                InterpolationArg::Linear => QcTecInterpolation::Linear,
+                InterpolationArg::Rotated => QcTecInterpolation::RotatedMaps,
+            };
+
+            if let Some(factor) = args.upsample {
+                if !(factor.is_finite() && factor > 0.0) {
+                    return Err(Error::Config(format!("invalid upsampling factor {}", factor)));
+                }
+                cfg.sampling = QcTecSampling::Factor(factor);
+            }
+
+            if let Some(period) = args.resample {
+                cfg.sampling = QcTecSampling::Period(period);
+            }
+
+            for region in args.region.iter() {
+                cfg.regions.push(crate::cli::parse_region(region)?);
+            }
+
+            setup.push((
+                "Maps".to_string(),
+                match cfg.sampling {
+                    QcTecSampling::Native => "native".to_string(),
+                    QcTecSampling::Factor(k) => format!("native sampling / {}", k),
+                    QcTecSampling::Period(dt) => format!("one map every {}", dt),
+                },
+            ));
+            setup.push((
+                "Temporal interpolation".to_string(),
+                format!("{:?}", cfg.interpolation),
+            ));
+            setup.push((
+                "Regions".to_string(),
+                cfg.regions
+                    .iter()
+                    .map(|r| r.name.clone())
+                    .collect::<Vec<_>>()
+                    .join(", "),
+            ));
+
+            if cfg.sampling != QcTecSampling::Native && !args.no_ionex {
+                consumers.push(Box::new(crate::sink::IonexSink::new(
+                    workspace,
+                    &inputs.ionex,
+                    cfg.interpolation,
+                    args.gzip,
+                )));
+            }
+
+            let engine = builder(cli, &mut inputs)
+                .with_processor(QcTecProcessor::new(cfg))
+                .build()
+                .map_err(engine_error)?;
+
+            ("tec", engine)
         },
 
         #[cfg(not(feature = "ionex"))]
@@ -365,10 +733,11 @@ pub fn plan(cli: &Cli, mut inputs: Inputs, workspace: &Workspace) -> Result<Plan
                 format!("{} km", cfg.shell_altitude_km),
             ));
 
-            let engine = builder(cli, &mut inputs)
-                .with_processor(QcIppProcessor::new(cfg))
-                .build()
-                .map_err(engine_error)?;
+            let mut builder = builder(cli, &mut inputs).with_processor(QcIppProcessor::new(cfg));
+            if qc {
+                (builder, qc_deployed) = with_qc(builder, &inputs, true, &mut setup);
+            }
+            let engine = builder.build().map_err(engine_error)?;
 
             ("ipp", engine)
         },
@@ -398,6 +767,8 @@ pub fn plan(cli: &Cli, mut inputs: Inputs, workspace: &Workspace) -> Result<Plan
         manifest: inputs.manifest.clone(),
         #[cfg(feature = "navigation")]
         navigation,
+        qc: qc_deployed,
+        combinations: combinations_deployed,
     };
 
     consumers.push(Box::new(SummarySink::new(workspace, &context)));

@@ -1,9 +1,10 @@
-//! Residual analyses: observations (receiver A − receiver B), orbits (product A − product B)
+//! Residual analyses: observations (receiver A − receiver B), orbits and clocks
+//! (product A − product B)
 use std::collections::BTreeMap;
 
 use itertools::Itertools;
 
-use gnss_qc::prelude::{Epoch, QcOutput, QcOutputItem, SV};
+use gnss_qc::prelude::{Epoch, QcClockId, QcOutput, QcOutputItem, SV};
 
 use crate::{
     engine::SessionContext,
@@ -292,6 +293,206 @@ impl Analysis for OrbitResiduals {
                 fmt(tracks.clock_ns.stats.mean(), 3),
                 fmt(tracks.clock_ns.stats.std(), 3),
             ]);
+        }
+        section.push(Block::Table(table));
+
+        vec![section]
+    }
+}
+
+/// Group of a clock: constellation of the satellite, or "Stations"
+fn clock_group(clock: &QcClockId) -> String {
+    match clock {
+        QcClockId::Satellite(sv) => format!("{}", sv.constellation),
+        QcClockId::Station(_) => "Stations".to_string(),
+    }
+}
+
+#[derive(Debug, Default)]
+struct ClockTracks {
+    raw_ns: Track,
+    aligned_ns: Track,
+}
+
+#[derive(Debug, Default)]
+pub struct ClockResiduals {
+    pair: Option<(String, String)>,
+    origin: Option<Epoch>,
+    /// group → clock → residuals
+    clocks: BTreeMap<String, BTreeMap<QcClockId, ClockTracks>>,
+    /// group → datum (ns), one point per epoch
+    datum: BTreeMap<String, BTreeMap<i64, (f64, f64)>>,
+}
+
+impl Analysis for ClockResiduals {
+    fn consume(&mut self, item: &QcOutputItem) {
+        if let QcOutput::ClockResidual(residual) = &item.payload {
+            if self.pair.is_none() {
+                self.pair = Some((
+                    format!("{:?} ({})", residual.lhs_kind, residual.lhs_source),
+                    format!("{:?} ({})", residual.rhs_kind, residual.rhs_source),
+                ));
+            }
+
+            let origin = *self.origin.get_or_insert(item.epoch);
+            let x = elapsed_s(origin, item.epoch);
+            let name = residual.clock.to_string();
+            let group = clock_group(&residual.clock);
+
+            let tracks = self
+                .clocks
+                .entry(group.clone())
+                .or_default()
+                .entry(residual.clock.clone())
+                .or_default();
+
+            tracks.raw_ns.push(&name, x, residual.residual_s * 1.0E9);
+
+            if let Some(aligned) = residual.aligned_s() {
+                tracks.aligned_ns.push(&name, x, aligned * 1.0E9);
+            }
+
+            if let (Some(datum), QcClockId::Satellite(_)) = (residual.datum_s, &residual.clock) {
+                self.datum
+                    .entry(group)
+                    .or_default()
+                    .insert(x.round() as i64, (x, datum * 1.0E9));
+            }
+        }
+    }
+
+    fn sections(&mut self, _: &SessionContext, _: &RunSummary) -> Vec<Section> {
+        let mut section = Section::new("clock-residuals", "Clock residuals");
+
+        let (Some((lhs, rhs)), Some(origin)) = (&self.pair, self.origin) else {
+            section.push(Block::Notice(
+                "No residual: both clock products must describe the same clocks at the same instants.".to_string(),
+            ));
+            return vec![section];
+        };
+
+        let satellites = self
+            .clocks
+            .iter()
+            .filter(|(group, _)| *group != "Stations")
+            .map(|(_, clocks)| clocks.len())
+            .sum::<usize>();
+
+        let stations = self.clocks.get("Stations").map(|c| c.len()).unwrap_or(0);
+
+        section.push(Block::KeyValue(vec![
+            ("A".to_string(), lhs.clone()),
+            ("B".to_string(), rhs.clone()),
+            ("Satellite clocks".to_string(), satellites.to_string()),
+            ("Station clocks".to_string(), stations.to_string()),
+        ]));
+
+        section.push(Block::Text(
+            "A − B for each clock described by both products. Each analysis center estimates its clocks relative to its own reference: the raw residuals of two centers share a common offset at each epoch (clock datum). The datum is estimated at each epoch (median of the satellite residuals, per constellation) and removed: the aligned residuals characterize the clocks themselves.".to_string(),
+        ));
+
+        let mut table = Table::new(&[
+            "Group",
+            "Clocks",
+            "Residuals",
+            "Raw mean (ns)",
+            "Raw σ (ns)",
+            "Aligned RMS (ns)",
+            "Aligned max (ns)",
+            "Aligned RMS (cm)",
+        ]);
+
+        for (group, clocks) in self.clocks.iter() {
+            let (mut raw, mut aligned) = (Stats::default(), Stats::default());
+            for tracks in clocks.values() {
+                if let Some(series) = &tracks.raw_ns.series {
+                    series.y.iter().for_each(|y| raw.push(*y));
+                }
+                if let Some(series) = &tracks.aligned_ns.series {
+                    series.y.iter().for_each(|y| aligned.push(*y));
+                }
+            }
+            table.push(vec![
+                group.clone(),
+                clocks.len().to_string(),
+                raw.n.to_string(),
+                fmt(raw.mean(), 3),
+                fmt(raw.std(), 3),
+                fmt(aligned.rms(), 3),
+                fmt(aligned.max_abs(), 3),
+                fmt(aligned.rms() * 29.9792458, 1),
+            ]);
+        }
+        section.push(Block::Table(table));
+
+        // datum
+        let mut chart = Chart::time("Clock datum difference (A − B)", "ns", origin);
+        for (group, points) in self.datum.iter() {
+            let mut series = Series::new(group);
+            for (x, y) in points.values() {
+                series.push(*x, *y);
+            }
+            chart.push(series);
+        }
+        if !chart.is_empty() {
+            section.push(Block::Chart(chart));
+        }
+
+        for (group, clocks) in self.clocks.iter() {
+            let mut aligned = Chart::time(
+                &format!("{}: aligned residuals (A − B − datum)", group),
+                "ns",
+                origin,
+            )
+            .with_kind(ChartKind::Markers);
+
+            for tracks in clocks.values() {
+                if let Some(series) = &tracks.aligned_ns.series {
+                    aligned.push(series.clone());
+                }
+            }
+
+            if !aligned.is_empty() {
+                section.push(Block::Chart(aligned));
+            }
+        }
+
+        let mut raw = Chart::time("Raw residuals (A − B), every clock", "ns", origin)
+            .with_kind(ChartKind::Markers);
+        for clocks in self.clocks.values() {
+            for tracks in clocks.values() {
+                if let Some(series) = &tracks.raw_ns.series {
+                    raw.push(series.clone());
+                }
+            }
+        }
+        section.push(Block::Chart(raw));
+
+        // per clock
+        section.push(Block::Heading("Clocks".to_string()));
+
+        let mut table = Table::new(&[
+            "Clock",
+            "Residuals",
+            "Raw mean (ns)",
+            "Aligned mean (ns)",
+            "Aligned σ (ns)",
+            "Aligned RMS (ns)",
+            "Aligned max (ns)",
+        ]);
+
+        for clocks in self.clocks.values() {
+            for (clock, tracks) in clocks.iter() {
+                table.push(vec![
+                    clock.to_string(),
+                    tracks.raw_ns.stats.n.to_string(),
+                    fmt(tracks.raw_ns.stats.mean(), 3),
+                    fmt(tracks.aligned_ns.stats.mean(), 3),
+                    fmt(tracks.aligned_ns.stats.std(), 3),
+                    fmt(tracks.aligned_ns.stats.rms(), 3),
+                    fmt(tracks.aligned_ns.stats.max_abs(), 3),
+                ]);
+            }
         }
         section.push(Block::Table(table));
 

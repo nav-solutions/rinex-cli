@@ -12,6 +12,9 @@ mod cggtts;
 #[cfg(feature = "navigation")]
 mod tracks;
 
+#[cfg(feature = "ionex")]
+mod ionex;
+
 pub use csv::CsvSink;
 pub use jsonl::JsonlSink;
 
@@ -20,6 +23,9 @@ pub use cggtts::{CggttsHeader, CggttsSink};
 
 #[cfg(feature = "navigation")]
 pub use tracks::{TrackFormat, TrackSink};
+
+#[cfg(feature = "ionex")]
+pub use ionex::IonexSink;
 
 use gnss_qc::prelude::{Epoch, QcEngineStats, QcOutputItem};
 

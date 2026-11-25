@@ -40,6 +40,8 @@ pub enum ProductKind {
     Clock,
     Antex,
     SP3,
+    #[cfg_attr(not(feature = "ionex"), allow(dead_code))]
+    Ionex,
 }
 
 impl std::fmt::Display for ProductKind {
@@ -51,6 +53,7 @@ impl std::fmt::Display for ProductKind {
             Self::Clock => write!(f, "CLK"),
             Self::Antex => write!(f, "ANTEX"),
             Self::SP3 => write!(f, "SP3"),
+            Self::Ionex => write!(f, "IONEX"),
         }
     }
 }
@@ -64,14 +67,6 @@ impl ProductKind {
             RinexType::ClockData => Self::Clock,
             RinexType::AntennaData => Self::Antex,
         }
-    }
-
-    /// True if this kind of product is converted into an engine source
-    pub fn is_processed(&self) -> bool {
-        matches!(
-            self,
-            Self::Observation | Self::Navigation | Self::SP3 | Self::Antex
-        )
     }
 }
 
@@ -177,9 +172,12 @@ pub struct Inputs {
     /// Session name, derived from the primary file
     pub session: String,
 
-    /// Products that are not converted into engine sources (meteo, clock RINEX),
-    /// merged per identity: available to the file operations
+    /// Meteo and clock RINEX, merged per identity: available to the file operations
     pub others: Vec<(ProductKind, QcIndexing, Rinex)>,
+
+    /// IONEX products, merged per identity: header of the synthesized IONEX files
+    #[cfg(feature = "ionex")]
+    pub ionex: Vec<(QcIndexing, ionex::prelude::IONEX)>,
 }
 
 /// One input file, possibly aliased
@@ -268,6 +266,8 @@ fn is_gzip(path: &Path) -> bool {
 pub enum Parsed {
     Rinex(Box<Rinex>),
     SP3(Box<SP3>),
+    #[cfg(feature = "ionex")]
+    Ionex(Box<ionex::prelude::IONEX>),
 }
 
 pub fn parse(path: &Path) -> Option<Parsed> {
@@ -284,25 +284,45 @@ pub fn parse(path: &Path) -> Option<Parsed> {
         Err(e) => debug!("{}: not a RINEX ({})", path.display(), e),
     }
 
+    #[cfg(feature = "ionex")]
+    {
+        let ionex = if gzip {
+            ionex::prelude::IONEX::from_gzip_file(path)
+        } else {
+            ionex::prelude::IONEX::from_file(path)
+        };
+
+        match ionex {
+            Ok(ionex) if ionex.record.iter().next().is_some() => {
+                return Some(Parsed::Ionex(Box::new(ionex)))
+            },
+            Ok(_) => debug!("{}: not a IONEX (no map)", path.display()),
+            Err(e) => debug!("{}: not a IONEX ({:?})", path.display(), e),
+        }
+    }
+
     let sp3 = if gzip {
         SP3::from_gzip_file(path)
     } else {
         SP3::from_file(path)
     };
 
+    // the SP3 and IONEX parsers are lenient: the content must be described
     match sp3 {
-        Ok(sp3) => Some(Parsed::SP3(Box::new(sp3))),
-        Err(e) => {
-            debug!("{}: not a SP3 ({:?})", path.display(), e);
-            None
-        },
+        Ok(sp3) if !sp3.data.is_empty() => return Some(Parsed::SP3(Box::new(sp3))),
+        Ok(_) => debug!("{}: not a SP3 (no content)", path.display()),
+        Err(e) => debug!("{}: not a SP3 ({:?})", path.display(), e),
     }
+
+    None
 }
 
 /// Preprocessing operations, designed once
 pub struct Preprocessor {
     filters: Vec<Filter>,
     zero_repair: bool,
+    snap_epochs: bool,
+    align_sampling: Option<Duration>,
 }
 
 impl Preprocessor {
@@ -341,10 +361,43 @@ impl Preprocessor {
         Ok(Self {
             filters,
             zero_repair: args.zero_repair,
+            snap_epochs: args.snap_epochs,
+            align_sampling: args.align_sampling,
         })
     }
 
-    pub fn rinex(&self, rinex: &mut Rinex) {
+    pub fn rinex(&self, path: &Path, rinex: &mut Rinex) {
+        if self.snap_epochs && rinex.header.rinex_type == RinexType::ObservationData {
+            let report = crate::snap::snap_epochs(rinex);
+            if report.shifted > 0 {
+                info!(
+                    "{}: {} epochs snapped to the second (largest correction {:.3} ms)",
+                    path.display(),
+                    report.shifted,
+                    report.max_shift_s * 1.0E3
+                );
+            }
+            if report.collisions > 0 {
+                warn!(
+                    "{}: {} epochs dropped (snapped to an existing second)",
+                    path.display(),
+                    report.collisions
+                );
+            }
+        }
+        if let Some(period) = self.align_sampling {
+            if rinex.header.rinex_type == RinexType::ObservationData {
+                let dropped = crate::snap::align_sampling(rinex, period);
+                if dropped > 0 {
+                    info!(
+                        "{}: {} epochs dropped (not a multiple of {})",
+                        path.display(),
+                        dropped,
+                        period
+                    );
+                }
+            }
+        }
         for filter in self.filters.iter() {
             rinex.filter_mut(filter);
         }
@@ -385,6 +438,9 @@ fn input_config(args: &InputArgs) -> Result<QcInputConfig, Error> {
     if let Some(method) = &args.clk_index {
         cfg.clk_rinex_indexing = method.to_config();
     }
+    if let Some(method) = &args.ionex_index {
+        cfg.ionex_indexing = method.to_config();
+    }
 
     Ok(cfg)
 }
@@ -397,7 +453,8 @@ fn aliased_config(alias: &str) -> QcInputConfig {
         nav_rinex_indexing: custom.clone(),
         meteo_rinex_indexing: custom.clone(),
         clk_rinex_indexing: custom.clone(),
-        sp3_indexing: custom,
+        sp3_indexing: custom.clone(),
+        ionex_indexing: custom,
     }
 }
 
@@ -486,6 +543,50 @@ fn sp3_entry(identity: QcIndexing, path: &Path, sp3: &SP3) -> ProductEntry {
     }
 }
 
+/// Describes a IONEX file
+#[cfg(feature = "ionex")]
+fn ionex_entry(identity: QcIndexing, path: &Path, ionex: &ionex::prelude::IONEX) -> ProductEntry {
+    let header = &ionex.header;
+    let grid = &header.grid;
+
+    let mut details = Vec::new();
+
+    if let Some(agency) = &header.run_by {
+        details.push(("agency".to_string(), agency.trim().to_string()));
+    }
+    if let Some(program) = &header.program {
+        details.push(("program".to_string(), program.trim().to_string()));
+    }
+    details.push((
+        "grid".to_string(),
+        format!(
+            "latitude {}° → {}° ({}°), longitude {}° → {}° ({}°), altitude {} km",
+            grid.latitude.start,
+            grid.latitude.end,
+            grid.latitude.spacing,
+            grid.longitude.start,
+            grid.longitude.end,
+            grid.longitude.spacing,
+            grid.altitude.start,
+        ),
+    ));
+    details.push(("maps".to_string(), ionex.epoch_iter().count().to_string()));
+
+    let epochs = ionex.epoch_iter().collect::<Vec<_>>();
+
+    ProductEntry {
+        identity,
+        kind: ProductKind::Ionex,
+        files: vec![path.to_path_buf()],
+        first: epochs.first().copied(),
+        last: epochs.last().copied(),
+        sampling: epochs.windows(2).map(|w| w[1] - w[0]).min(),
+        satellites: BTreeSet::new(),
+        position_ecef_m: None,
+        details,
+    }
+}
+
 impl Inputs {
     /// Discovers, parses, preprocesses and indexes the input products
     pub fn load(args: &InputArgs, preprocessing: &PreprocessingArgs) -> Result<Self, Error> {
@@ -498,6 +599,9 @@ impl Inputs {
 
         let mut primary: Option<(bool, PathBuf)> = None;
         let mut others = Vec::<(ProductKind, QcIndexing, Rinex)>::new();
+
+        #[cfg(feature = "ionex")]
+        let mut ionex_products = Vec::<(QcIndexing, ionex::prelude::IONEX)>::new();
 
         for file in files.iter() {
             let path = &file.path;
@@ -522,7 +626,7 @@ impl Inputs {
             // (exact identity), then merged into the session table.
             let entry = match parsed {
                 Parsed::Rinex(mut rinex) => {
-                    preprocessor.rinex(&mut rinex);
+                    preprocessor.rinex(path, &mut rinex);
 
                     let mut single = QcInputProducts::default();
                     single
@@ -532,26 +636,16 @@ impl Inputs {
                     let identity = single
                         .obs_rinex_iter()
                         .chain(single.nav_rinex_iter())
+                        .chain(single.meteo_rinex_iter())
+                        .chain(single.clk_rinex_iter())
                         .chain(single.antex_iter())
                         .map(|(identity, _)| identity.clone())
                         .next()
-                        .unwrap_or_else(|| {
-                            // meteo and clock tables are not exposed: same rule
-                            match file_cfg.rinex_type_preference(&rinex.header.rinex_type) {
-                                Some(QcIndexingConfig::Custom(alias)) => QcIndexing::Custom(alias),
-                                Some(QcIndexingConfig::FileName) => {
-                                    QcIndexing::Custom(file_stem(path))
-                                },
-                                _ => match &rinex.header.agency {
-                                    Some(agency) => QcIndexing::Agency(agency.clone()),
-                                    None => QcIndexing::Custom(file_stem(path)),
-                                },
-                            }
-                        });
+                        .unwrap_or_else(|| QcIndexing::Custom(file_stem(path)));
 
                     let entry = rinex_entry(identity, path, &rinex);
 
-                    if !entry.kind.is_processed() {
+                    if matches!(entry.kind, ProductKind::Meteo | ProductKind::Clock) {
                         match others
                             .iter_mut()
                             .find(|(kind, id, _)| *kind == entry.kind && *id == entry.identity)
@@ -593,6 +687,36 @@ impl Inputs {
 
                     entry
                 },
+                #[cfg(feature = "ionex")]
+                Parsed::Ionex(ionex) => {
+                    let mut single = QcInputProducts::default();
+                    single
+                        .load_ionex(&file_cfg, path, (*ionex).clone())
+                        .map_err(|e| Error::QcInput(e.to_string()))?;
+
+                    let identity = single
+                        .ionex_iter()
+                        .map(|(identity, _)| identity.clone())
+                        .next()
+                        .expect("internal error: ionex indexing");
+
+                    let entry = ionex_entry(identity.clone(), path, &ionex);
+
+                    match ionex_products.iter_mut().find(|(id, _)| *id == identity) {
+                        Some((_, merged)) => {
+                            for (key, tec) in ionex.record.iter() {
+                                merged.record.insert(*key, *tec);
+                            }
+                        },
+                        None => ionex_products.push((identity, (*ionex).clone())),
+                    }
+
+                    products
+                        .load_ionex(&file_cfg, path, *ionex)
+                        .map_err(|e| Error::QcInput(format!("{}: {}", path.display(), e)))?;
+
+                    entry
+                },
             };
 
             info!(
@@ -623,15 +747,6 @@ impl Inputs {
             return Err(Error::NoInput);
         }
 
-        for entry in manifest.values() {
-            if !entry.kind.is_processed() {
-                warn!(
-                    "{} \"{}\" is loaded but not processed: GNSS-Qc does not support {} products yet",
-                    entry.kind, entry.identity, entry.kind
-                );
-            }
-        }
-
         let session = primary
             .map(|(_, path)| file_stem(&path))
             .unwrap_or_else(|| "session".to_string());
@@ -641,6 +756,8 @@ impl Inputs {
             manifest: manifest.into_values().collect(),
             session,
             others,
+            #[cfg(feature = "ionex")]
+            ionex: ionex_products,
         })
     }
 

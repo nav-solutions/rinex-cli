@@ -1,5 +1,7 @@
 //! Accumulators: analyze the output stream, build the report sections.
+mod combinations;
 pub mod context;
+mod meteo;
 mod residuals;
 mod signals;
 
@@ -11,6 +13,9 @@ mod cggtts;
 
 #[cfg(feature = "ionex")]
 mod ipp;
+
+#[cfg(feature = "ionex")]
+mod tec;
 
 use gnss_qc::prelude::QcOutputItem;
 
@@ -30,9 +35,14 @@ pub fn for_command(context: &SessionContext) -> Vec<Box<dyn Analysis>> {
     let mut analyses: Vec<Box<dyn Analysis>> = Vec::new();
 
     match context.command.as_str() {
-        "qc" => analyses.push(Box::new(signals::SignalAnalysis::default())),
+        "qc" => analyses.push(Box::new(signals::SignalAnalysis::new(context))),
         "residuals obs" => analyses.push(Box::new(residuals::ObservationResiduals::default())),
         "residuals orbit" => analyses.push(Box::new(residuals::OrbitResiduals::default())),
+        "residuals clock" => analyses.push(Box::new(residuals::ClockResiduals::default())),
+        "meteo" => analyses.push(Box::new(meteo::MeteoAnalysis::default())),
+        "combinations" => analyses.push(Box::new(combinations::CombinationAnalysis::new(context))),
+        #[cfg(feature = "ionex")]
+        "tec" => analyses.push(Box::new(tec::TecAnalysis::default())),
         #[cfg(feature = "navigation")]
         "nav" => analyses.push(Box::new(navigation::NavigationAnalysis::new(context))),
         #[cfg(feature = "cggtts")]
@@ -41,8 +51,18 @@ pub fn for_command(context: &SessionContext) -> Vec<Box<dyn Analysis>> {
             analyses.push(Box::new(navigation::NavigationAnalysis::new(context)));
         },
         #[cfg(feature = "ionex")]
-        "ipp" => analyses.push(Box::new(ipp::IppAnalysis::default())),
+        "ipp" => analyses.push(Box::new(ipp::IppAnalysis::new(context))),
         _ => {},
+    }
+
+    // navigation: signal combinations of the rover (and base)
+    if context.combinations && context.command != "combinations" {
+        analyses.push(Box::new(combinations::CombinationAnalysis::new(context)));
+    }
+
+    // processing commands: the quality control of the observations follows
+    if context.qc && context.command != "qc" {
+        analyses.push(Box::new(signals::SignalAnalysis::new(context)));
     }
 
     analyses

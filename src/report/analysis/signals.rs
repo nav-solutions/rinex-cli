@@ -6,13 +6,23 @@ use itertools::Itertools;
 use gnss_qc::prelude::{Constellation, Duration, Epoch, QcOutput, QcOutputItem, SV};
 use rinex::prelude::obs::{EpochFlag, LliFlags};
 
+use gnss_qc::orbit::QcKepler;
+
 use crate::{
     engine::SessionContext,
+    input::ProductKind,
     report::{
-        analysis::Analysis, elapsed_s, stats::fmt, Block, Chart, Section, Series, Stats, Table,
+        analysis::Analysis,
+        elapsed_s,
+        sky::{azimuth_elevation, SkyAccumulator},
+        stats::fmt,
+        Block, Chart, Section, Series, Stats, Table,
     },
     sink::RunSummary,
 };
+
+/// Broadcast ephemerides are used up to this distance from their time of clock (s)
+const MAX_EPHEMERIS_AGE_S: f64 = 4.0 * 3600.0;
 
 /// Maximal number of data gaps listed
 const MAX_GAPS: usize = 50;
@@ -102,11 +112,54 @@ impl ReceiverState {
 #[derive(Debug, Default)]
 pub struct SignalAnalysis {
     receivers: BTreeMap<String, ReceiverState>,
+    /// Reference position of each signal source (RINEX header)
+    positions: HashMap<String, (f64, f64, f64)>,
+    /// Broadcast ephemerides, per satellite
+    ephemerides: HashMap<SV, Vec<QcKepler>>,
+    /// Sky of each signal source
+    skies: BTreeMap<String, SkyAccumulator>,
+    /// Signal sources positioned by the navigation solutions (instead of the RINEX header)
+    #[cfg_attr(not(feature = "navigation"), allow(dead_code))]
+    solved: BTreeSet<String>,
+}
+
+impl SignalAnalysis {
+    pub fn new(context: &SessionContext) -> Self {
+        Self {
+            positions: context
+                .manifest
+                .iter()
+                .filter(|entry| entry.kind == ProductKind::Observation)
+                .filter_map(|entry| Some((entry.identity.to_string(), entry.position_ecef_m?)))
+                .collect(),
+            ..Default::default()
+        }
+    }
+
+    /// Broadcast state of the satellite (ECEF m), closest ephemeris
+    fn satellite_position(&self, sv: SV, t: Epoch) -> Option<(f64, f64, f64)> {
+        let kepler = self
+            .ephemerides
+            .get(&sv)?
+            .iter()
+            .map(|k| (k, (t - k.toc).to_seconds().abs()))
+            .filter(|(_, age)| *age <= MAX_EPHEMERIS_AGE_S)
+            .min_by(|a, b| a.1.partial_cmp(&b.1).unwrap())?
+            .0;
+        Some(kepler.state(t).position_m)
+    }
 }
 
 impl Analysis for SignalAnalysis {
     fn consume(&mut self, item: &QcOutputItem) {
         match &item.payload {
+            // navigation: the sky view follows the receiver
+            #[cfg(feature = "navigation")]
+            QcOutput::PVTSolution(solution) => {
+                self.positions
+                    .insert(solution.receiver.to_string(), solution.solution.pos_m);
+                self.solved.insert(solution.receiver.to_string());
+            },
             QcOutput::Signal(signal) => {
                 let epoch = item.epoch;
                 let rx = self
@@ -123,6 +176,31 @@ impl Analysis for SignalAnalysis {
                 }
 
                 let obs = &signal.signal;
+
+                // sky: satellite seen, position from the broadcast ephemerides
+                let receiver = signal.receiver.to_string();
+                let position = self.positions.get(&receiver).copied();
+                let sv_position = match position {
+                    Some(_) => self
+                        .skies
+                        .get(&receiver)
+                        .map(|sky| sky.needs_position(obs.sv, epoch))
+                        .unwrap_or(true)
+                        .then(|| self.satellite_position(obs.sv, epoch))
+                        .flatten(),
+                    None => None,
+                };
+                let sky = self.skies.entry(receiver).or_default();
+                sky.seen(obs.sv, epoch);
+                if let (Some(rx), Some(sv)) = (position, sv_position) {
+                    let (azimuth, elevation) = azimuth_elevation(rx, sv);
+                    sky.position(obs.sv, epoch, azimuth, elevation);
+                }
+
+                let rx = self
+                    .receivers
+                    .entry(signal.receiver.to_string())
+                    .or_default();
                 let origin = rx.origin().unwrap_or(epoch);
                 let sat = rx.satellites.entry(obs.sv).or_default();
 
@@ -165,6 +243,17 @@ impl Analysis for SignalAnalysis {
                     sat.observables.insert(code);
                 }
             },
+            QcOutput::Ephemeris(eph) => {
+                if let Some(kepler) = QcKepler::from_ephemeris(eph.sv, eph.toc, &eph.ephemeris) {
+                    let list = self.ephemerides.entry(eph.sv).or_default();
+                    if !list.iter().any(|k| k.toc == kepler.toc) {
+                        list.push(kepler);
+                    }
+                    // bounded memory: ephemerides of the last 12 hours
+                    let toc = eph.toc;
+                    list.retain(|k| (toc - k.toc).to_seconds() < 12.0 * 3600.0);
+                }
+            },
             QcOutput::EphemerisCoverage(coverage) => {
                 let rx = self
                     .receivers
@@ -194,7 +283,10 @@ impl Analysis for SignalAnalysis {
             };
             let (first, last) = (*first, *last);
 
-            let mut section = Section::new(&format!("receiver-{}", index), receiver);
+            let mut section = Section::new(
+                &format!("receiver-{}", index),
+                &format!("Observations: {}", receiver),
+            );
 
             let sampling = rx.sampling();
             let gaps = sampling.map(|dt| rx.gaps(dt)).unwrap_or_default();
@@ -293,6 +385,23 @@ impl Analysis for SignalAnalysis {
                 chart.push(series.clone());
             }
             section.push(Block::Chart(chart));
+
+            if let Some(sky) = self.skies.get(receiver) {
+                if !sky.has_positions() {
+                    section.push(Block::Text(
+                        "Sky plot: requires the reference position of the receiver (RINEX header) and broadcast ephemerides (NAV RINEX, Keplerian constellations).".to_string(),
+                    ));
+                }
+                sky.push_blocks(
+                    &mut section,
+                    if self.solved.contains(receiver) {
+                        "Sky plot (broadcast ephemerides, position of the navigation solutions)"
+                    } else {
+                        "Sky plot (broadcast ephemerides, RINEX header position)"
+                    },
+                    "Satellites observed, over time",
+                );
+            }
 
             // signal strength, per constellation
             for (constellation, observable) in
