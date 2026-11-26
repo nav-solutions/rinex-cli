@@ -83,10 +83,7 @@ pub fn sections(context: &SessionContext, run: &RunSummary) -> Section {
         ("Command line".to_string(), context.command_line.clone()),
         (
             "Software".to_string(),
-            format!(
-                "rinex-cli v{}, gnss-qc v0.7 (develop)",
-                env!("CARGO_PKG_VERSION")
-            ),
+            format!("rinex-cli v{}, gnss-qc v0.8", env!("CARGO_PKG_VERSION")),
         ),
     ]));
 
