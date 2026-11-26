@@ -84,7 +84,7 @@ pub fn sections(context: &SessionContext, run: &RunSummary) -> Section {
         (
             "Software".to_string(),
             format!(
-                "rinex-cli v{}, gnss-qc v0.8 (develop)",
+                "rinex-cli v{}, gnss-qc v0.8",
                 env!("CARGO_PKG_VERSION")
             ),
         ),
