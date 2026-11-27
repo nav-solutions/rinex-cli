@@ -52,6 +52,11 @@ pub struct SessionContext {
 
     /// Signal combinations deployed next to a processing command (navigation)
     pub combinations: bool,
+
+    /// TEC maps of the obs2tec command
+    #[cfg(feature = "ionex")]
+    #[serde(skip)]
+    pub obs2tec: Option<crate::obs2tec::Obs2TecSetup>,
 }
 
 /// Engine and consumers, ready to run
@@ -213,6 +218,9 @@ pub fn plan(cli: &Cli, mut inputs: Inputs, workspace: &Workspace) -> Result<Plan
 
     #[cfg(feature = "navigation")]
     let mut navigation = None;
+
+    #[cfg(feature = "ionex")]
+    let mut obs2tec = None;
 
     // quality control of the observations, in the reports of the processing commands
     let qc = !cli.outputs.no_qc;
@@ -741,6 +749,161 @@ pub fn plan(cli: &Cli, mut inputs: Inputs, workspace: &Workspace) -> Result<Plan
 
             ("ipp", engine)
         },
+
+        #[cfg(not(feature = "ionex"))]
+        Command::Obs2tec(_) => {
+            return Err(Error::Config(
+                "rinex-cli was built without the \"ionex\" feature: cargo install rinex-cli --features ionex".to_string(),
+            ))
+        },
+
+        #[cfg(feature = "ionex")]
+        Command::Obs2tec(args) => {
+            use crate::obs2tec::{parse_point, GridExtent, Obs2TecSetup};
+            use gnss_qc::prelude::{QcObsTecConfig, QcObsTecProcessor};
+            use std::str::FromStr;
+
+            if inputs.entries(ProductKind::Observation).next().is_none() {
+                return Err(Error::Config(
+                    "obs2tec requires observations (one or more receivers)".to_string(),
+                ));
+            }
+
+            let mut cfg = QcObsTecConfig {
+                orbits: args.orbits.to_preference(),
+                elevation_mask_deg: args.elevation_mask,
+                shell_altitude_km: args.shell_altitude,
+                max_gap: args.max_gap,
+                slip_threshold_m: args.slip_threshold,
+                ..Default::default()
+            };
+
+            if !args.constellations.is_empty() {
+                cfg = cfg.with_constellations(&parse_constellations(&args.constellations)?);
+            }
+
+            for receiver in args.receivers.iter() {
+                cfg = cfg.with_receiver(inputs.resolve(receiver, ProductKind::Observation)?);
+            }
+
+            for (name, value) in [("latitude", args.dlat), ("longitude", args.dlon)] {
+                if !(value.is_finite() && value > 0.0) {
+                    return Err(Error::Config(format!("invalid {} spacing {}", name, value)));
+                }
+            }
+
+            let mut grid = Obs2TecSetup {
+                extent: GridExtent::from_str(&args.grid).map_err(Error::Config)?,
+                dlat_deg: args.dlat,
+                dlon_deg: args.dlon,
+                interval: args.interval,
+                radius_deg: args.radius.unwrap_or(args.dlat.max(args.dlon)),
+                min_samples: args.min_samples,
+                rotation: !args.no_rotation,
+                shell_altitude_km: cfg.shell_altitude_km,
+                earth_radius_km: cfg.earth_radius_km,
+                elevation_mask_deg: cfg.elevation_mask_deg,
+                ..Default::default()
+            };
+
+            if grid.interval.to_seconds() <= 0.0 {
+                return Err(Error::Config("invalid map interval".to_string()));
+            }
+
+            for region in args.region.iter() {
+                grid.regions.push(crate::cli::parse_region(region)?);
+            }
+
+            for point in args.point.iter() {
+                grid.points.push(parse_point(point).map_err(Error::Config)?);
+            }
+
+            setup.push((
+                "Receivers".to_string(),
+                if cfg.receivers.is_empty() {
+                    "all signal sources".to_string()
+                } else {
+                    cfg.receivers
+                        .iter()
+                        .map(|r| r.to_string())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                },
+            ));
+            setup.push((
+                "Elevation mask".to_string(),
+                format!("{}°", cfg.elevation_mask_deg),
+            ));
+            setup.push((
+                "Single layer".to_string(),
+                format!("{} km, mapping function 1/cos(z')", cfg.shell_altitude_km),
+            ));
+            setup.push((
+                "Phase arcs".to_string(),
+                format!(
+                    "end on loss of lock, gaps > {}, geometry free phase jumps > {} m",
+                    cfg.max_gap, cfg.slip_threshold_m
+                ),
+            ));
+            setup.push((
+                "Differential code biases".to_string(),
+                "not corrected (uncalibrated TEC)".to_string(),
+            ));
+            setup.push((
+                "Maps".to_string(),
+                format!(
+                    "one every {}, {} grid, {}° × {}°, {} frame",
+                    grid.interval,
+                    match grid.extent {
+                        GridExtent::Network => "network".to_string(),
+                        GridExtent::World => "world".to_string(),
+                        GridExtent::Bounds {
+                            latitude_deg,
+                            longitude_deg,
+                        } => format!(
+                            "[{}°, {}°] × [{}°, {}°]",
+                            latitude_deg.0, latitude_deg.1, longitude_deg.0, longitude_deg.1
+                        ),
+                    },
+                    grid.dlat_deg,
+                    grid.dlon_deg,
+                    if grid.rotation {
+                        "Sun-fixed"
+                    } else {
+                        "Earth-fixed"
+                    },
+                ),
+            ));
+            setup.push((
+                "Gridding".to_string(),
+                format!(
+                    "inverse distance weighted, radius {}°, at least {} pierce points per node",
+                    grid.radius_deg, grid.min_samples
+                ),
+            ));
+
+            if args.ionex {
+                let name = cli
+                    .outputs
+                    .session
+                    .clone()
+                    .unwrap_or_else(|| inputs.session.clone());
+                consumers.push(Box::new(crate::sink::Obs2TecIonexSink::new(
+                    workspace, &name, &grid, args.gzip,
+                )));
+            }
+
+            obs2tec = Some(grid);
+
+            let mut builder =
+                builder(cli, &mut inputs).with_processor(QcObsTecProcessor::new(cfg));
+            if qc {
+                (builder, qc_deployed) = with_qc(builder, &inputs, true, &mut setup);
+            }
+            let engine = builder.build().map_err(engine_error)?;
+
+            ("obs2tec", engine)
+        },
     };
 
     // generic consumers
@@ -769,6 +932,8 @@ pub fn plan(cli: &Cli, mut inputs: Inputs, workspace: &Workspace) -> Result<Plan
         navigation,
         qc: qc_deployed,
         combinations: combinations_deployed,
+        #[cfg(feature = "ionex")]
+        obs2tec,
     };
 
     consumers.push(Box::new(SummarySink::new(workspace, &context)));

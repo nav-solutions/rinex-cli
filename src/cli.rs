@@ -341,6 +341,13 @@ pub enum Command {
     /// Ionospheric Pierce Points of every line of sight. Requires the ionex feature.
     Ipp(IppArgs),
 
+    /// TEC estimated from the observations (dual frequency code and phase) of one receiver
+    /// or a network of receivers: vertical TEC at the pierce points, gridded into TEC maps,
+    /// projected on points and regions, formatted as IONEX (--ionex).
+    /// Uncalibrated: the differential code biases (DCB) are not corrected.
+    /// Requires the ionex feature.
+    Obs2tec(Obs2TecArgs),
+
     /// File operation: writes the (preprocessed) input products as RINEX / SP3
     Filegen(FilegenArgs),
 
@@ -857,6 +864,90 @@ pub struct IppArgs {
     /// Constellations, comma separated. Default: all.
     #[arg(short, long, value_delimiter = ',')]
     pub constellations: Vec<String>,
+}
+
+#[derive(Debug, Args)]
+pub struct Obs2TecArgs {
+    /// Elevation mask (degrees)
+    #[arg(long, default_value_t = 15.0)]
+    pub elevation_mask: f64,
+
+    /// Altitude of the ionospheric shell (km), single layer model
+    #[arg(long, default_value_t = 450.0)]
+    pub shell_altitude: f64,
+
+    /// Orbital products preference
+    #[arg(long, value_enum, default_value = "auto")]
+    pub orbits: OrbitsArg,
+
+    /// Constellations, comma separated. Default: all.
+    #[arg(short, long, value_delimiter = ',')]
+    pub constellations: Vec<String>,
+
+    /// Receivers (signal sources) of the network, comma separated. Default: all.
+    #[arg(long, value_delimiter = ',', value_name = "PRODUCT")]
+    pub receivers: Vec<String>,
+
+    /// A data gap longer than this ends a phase arc (leveling)
+    #[arg(long, value_name = "PERIOD", default_value = "10 min", value_parser = parse_duration)]
+    pub max_gap: gnss_qc::prelude::Duration,
+
+    /// A jump of the geometry free phase larger than this (m) ends a phase arc (cycle slip)
+    #[arg(long, value_name = "METERS", default_value_t = 0.1)]
+    pub slip_threshold: f64,
+
+    /// One TEC map every period
+    #[arg(long, value_name = "PERIOD", default_value = "1 h", value_parser = parse_duration)]
+    pub interval: gnss_qc::prelude::Duration,
+
+    /// Extent of the maps: "network" (bounding box of the pierce points), "world",
+    /// or "LAT_MIN,LAT_MAX,LON_MIN,LON_MAX" (degrees)
+    #[arg(
+        long,
+        value_name = "network|world|LAT0,LAT1,LON0,LON1",
+        default_value = "network"
+    )]
+    pub grid: String,
+
+    /// Latitude spacing of the grid (degrees)
+    #[arg(long, value_name = "DEGREES", default_value_t = 2.5)]
+    pub dlat: f64,
+
+    /// Longitude spacing of the grid (degrees)
+    #[arg(long, value_name = "DEGREES", default_value_t = 5.0)]
+    pub dlon: f64,
+
+    /// Influence radius of a pierce point (degrees, great circle).
+    /// Default: the largest grid spacing.
+    #[arg(long, value_name = "DEGREES")]
+    pub radius: Option<f64>,
+
+    /// Minimal number of pierce points of a grid node (empty node otherwise)
+    #[arg(long, value_name = "COUNT", default_value_t = 3)]
+    pub min_samples: usize,
+
+    /// Earth-fixed maps. Default: Sun-fixed frame (IONEX specifications), the
+    /// pierce points being rotated with the Sun onto the epoch of their map.
+    #[arg(long)]
+    pub no_rotation: bool,
+
+    /// Additional region of the statistics: "NAME:LAT_MIN,LAT_MAX,LON_MIN,LON_MAX"
+    /// (degrees). Repeat as needed.
+    #[arg(long, value_name = "NAME:LAT0,LAT1,LON0,LON1")]
+    pub region: Vec<String>,
+
+    /// Point of interest, TEC projected map after map: "NAME:LAT,LON" (degrees).
+    /// Repeat as needed.
+    #[arg(long, value_name = "NAME:LAT,LON")]
+    pub point: Vec<String>,
+
+    /// Formats the TEC maps as IONEX (WORKSPACE/SESSION/IONEX)
+    #[arg(long)]
+    pub ionex: bool,
+
+    /// Gzip compressed IONEX output
+    #[arg(long, requires = "ionex")]
+    pub gzip: bool,
 }
 
 /// Parses a duration: "30 s", "30s", "1 min", or a number of seconds ("30")

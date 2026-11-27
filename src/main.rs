@@ -15,6 +15,12 @@ mod workspace;
 #[cfg(feature = "navigation")]
 mod nav;
 
+#[cfg(feature = "ionex")]
+mod obs2tec;
+
+#[cfg(all(test, feature = "ionex"))]
+mod tests;
+
 use clap::Parser;
 use env_logger::{Builder, Env, Target};
 

@@ -17,6 +17,9 @@ mod ipp;
 #[cfg(feature = "ionex")]
 mod tec;
 
+#[cfg(feature = "ionex")]
+mod obs2tec;
+
 use gnss_qc::prelude::QcOutputItem;
 
 use crate::{engine::SessionContext, report::Section, sink::RunSummary};
@@ -52,6 +55,8 @@ pub fn for_command(context: &SessionContext) -> Vec<Box<dyn Analysis>> {
         },
         #[cfg(feature = "ionex")]
         "ipp" => analyses.push(Box::new(ipp::IppAnalysis::new(context))),
+        #[cfg(feature = "ionex")]
+        "obs2tec" => analyses.push(Box::new(obs2tec::Obs2TecAnalysis::new(context))),
         _ => {},
     }
 

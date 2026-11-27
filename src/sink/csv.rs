@@ -267,6 +267,63 @@ impl Consumer for CsvSink {
                     ipp.obliquity_factor,
                 )?;
             },
+            #[cfg(feature = "ionex")]
+            QcOutput::TecEstimate(tec) => {
+                let fd = self.file(
+                    "tec_estimates",
+                    "epoch,receiver,sv,code_1,code_j,phase_1,phase_j,arc,arc_samples,elevation_deg,azimuth_deg,latitude_deg,longitude_deg,altitude_km,obliquity_factor,code_slant_tecu,phase_slant_tecu,leveling_tecu,slant_tecu,vertical_tecu,map_vertical_tecu",
+                )?;
+                writeln!(
+                    fd,
+                    "{},{},{},{},{},{},{},{},{},{:.3},{:.3},{:.5},{:.5},{:.1},{:.5},{:.3},{:.3},{:.3},{:.3},{:.3},{}",
+                    epoch,
+                    field(&tec.receiver.to_string()),
+                    tec.sv,
+                    tec.code_1,
+                    tec.code_j,
+                    tec.phase_1,
+                    tec.phase_j,
+                    tec.arc,
+                    tec.arc_samples,
+                    tec.elevation_deg,
+                    tec.azimuth_deg,
+                    tec.latitude_deg,
+                    tec.longitude_deg,
+                    tec.altitude_km,
+                    tec.obliquity_factor,
+                    tec.code_slant_tecu,
+                    tec.phase_slant_tecu,
+                    tec.leveling_tecu,
+                    tec.slant_tecu,
+                    tec.vertical_tecu,
+                    tec.map_vertical_tecu
+                        .map(|v| format!("{:.3}", v))
+                        .unwrap_or_default(),
+                )?;
+            },
+            #[cfg(feature = "ionex")]
+            QcOutput::TecArc(arc) => {
+                let fd = self.file(
+                    "tec_arcs",
+                    "receiver,sv,code_1,code_j,phase_1,phase_j,arc,start,end,samples,leveling_tecu,code_noise_tecu",
+                )?;
+                writeln!(
+                    fd,
+                    "{},{},{},{},{},{},{},{},{},{},{:.3},{:.3}",
+                    field(&arc.receiver.to_string()),
+                    arc.sv,
+                    arc.code_1,
+                    arc.code_j,
+                    arc.phase_1,
+                    arc.phase_j,
+                    arc.arc,
+                    arc.start,
+                    arc.end,
+                    arc.samples,
+                    arc.leveling_tecu,
+                    arc.code_noise_tecu,
+                )?;
+            },
             QcOutput::ClockResidual(residual) => {
                 let fd = self.file(
                     "clock_residuals",

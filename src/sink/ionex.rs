@@ -43,7 +43,7 @@ impl IonexSink {
 }
 
 /// "15M", "01H", "30S" (sampling interval, file names)
-fn period_code(seconds: f64) -> String {
+pub fn period_code(seconds: f64) -> String {
     if seconds >= 3600.0 && seconds % 3600.0 == 0.0 {
         format!("{:02}H", (seconds / 3600.0) as u32)
     } else if seconds >= 60.0 && seconds % 60.0 == 0.0 {

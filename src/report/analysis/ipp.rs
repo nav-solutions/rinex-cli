@@ -419,6 +419,7 @@ mod test {
             navigation: None,
             qc: false,
             combinations: false,
+            obs2tec: None,
         };
         let mut analysis = IppAnalysis::new(&context);
         analysis.positions.insert(

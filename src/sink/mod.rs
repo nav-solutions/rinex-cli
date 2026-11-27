@@ -15,6 +15,9 @@ mod tracks;
 #[cfg(feature = "ionex")]
 mod ionex;
 
+#[cfg(feature = "ionex")]
+mod obs2tec;
+
 pub use csv::CsvSink;
 pub use jsonl::JsonlSink;
 
@@ -25,7 +28,10 @@ pub use cggtts::{CggttsHeader, CggttsSink};
 pub use tracks::{TrackFormat, TrackSink};
 
 #[cfg(feature = "ionex")]
-pub use ionex::IonexSink;
+pub use ionex::{period_code, IonexSink};
+
+#[cfg(feature = "ionex")]
+pub use obs2tec::Obs2TecIonexSink;
 
 use gnss_qc::prelude::{Epoch, QcEngineStats, QcOutputItem};
 
