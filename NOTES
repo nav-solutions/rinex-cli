@@ -1,0 +1,15 @@
+This demonstration is one of the first application where we consider a large network
+of GNSS receivers using our powerful GNSS-Qc processor.
+
+In this example we deploy several NTRIP clients
+(input side), because GNSS-Qc is a true MISO (Multi Input Single Output) processor, it is able to
+absorb, synchronize and process all these data sources. In this example, we focus on dual frequency
+code range and phase observations on each individual sites. We deploy the QcTecProcessor which
+consumes the raw observations and evaluate the Vertical Total Electron Content (VTEC) on each site location.
+
+The network we will use is centipede.fr which offers a large amount of reference sites, originally dedicated to RTK
+([Real Time Kinematics](../documentation/RTK.md)). Each data source is labelled according to its position and the official
+reference site (often times referred to as "Marker" name).
+
+The network covers Western Europe and mostly France, we will compute the regional VTEC over the course of 2 hours (two complete hours of measurements gathering
+and computations).

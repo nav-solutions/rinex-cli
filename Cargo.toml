@@ -31,7 +31,8 @@ ppp = ["navigation"]
 # CGGTTS solutions (cggtts command)
 cggtts = ["navigation", "gnss-qc/cggtts", "dep:cggtts"]
 
-# IONEX: TEC maps (tec command), Ionospheric Pierce Points (ipp command)
+# IONEX: TEC maps (tec command), Ionospheric Pierce Points (ipp command),
+# TEC estimated from the observations (obs2tec command)
 ionex = ["gnss-qc/ionex", "dep:ionex"]
 
 # Embeds the ANISE dataset at build time: no Internet access at runtime
@@ -83,3 +84,7 @@ ionex = { version = "0.2", optional = true, default-features = false, features =
 
 gnss-qc-traits = { version = "0.6", features = ["processing"] }
 gnss-qc = { version = "0.8", default-features = false, features = ["sp3", "flate2", "serde", "log"] }
+
+# obs2tec: QcObsTecProcessor (gnss-qc feat/tec), until the next gnss-qc release
+[patch.crates-io]
+gnss-qc = { git = "https://github.com/nav-solutions/gnss-qc", branch = "feat/tec" }
