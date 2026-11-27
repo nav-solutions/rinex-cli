@@ -11,6 +11,7 @@ This folder gives substantial examples of each command line option.
 - [Meteo sensors](./METEO)
 - [Signal combinations: Geometry Free, Ionosphere Free, code multipath](./COMBINATIONS)
 - [TEC maps (IONEX): analysis, interpolation, synthesis](./IONEX)
+- [TEC from the observations of a receiver network, formatted as IONEX](./OBS2TEC)
 
 ## Demos
 

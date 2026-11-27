@@ -23,7 +23,7 @@ not real-time navigation, and emphasizes a fraction of what `gnss-qc` offers:
 
 - Quality control: sampling, data gaps, signal strength, lock losses, ephemeris coverage,
   sky plot and satellite visibility timeline. The reports of the processing commands
-  (`nav`, `cggtts`, `ipp`, `residuals obs`, `combinations`) end with the same quality control of their observations
+  (`nav`, `cggtts`, `ipp`, `obs2tec`, `residuals obs`, `combinations`) end with the same quality control of their observations
 - Post processed navigation: SPP, CPP, PPP (`navigation` feature)
 - RTK (differential) navigation: RTK-SPP, RTK-CPP, RTK-PPP, with the baseline in the report
 - Navigation reports: trajectory map (OpenStreetMap in HTML, local plan in PDF), world map,
@@ -38,6 +38,8 @@ not real-time navigation, and emphasizes a fraction of what `gnss-qc` offers:
 - TEC maps analysis, temporal interpolation and IONEX synthesis (`ionex` feature)
 - Ionospheric Pierce Points (`ionex` feature): regional and world maps of the pierce points,
   vertical TEC at the pierce points (IONEX), lines of sight
+- TEC estimated from the observations of a receiver or a network of receivers (`ionex` feature):
+  TEC maps projected on regions and points, formatted as IONEX (uncalibrated: DCB not corrected)
 - File operations: filegen, merge, split, tbin, cbin, diff
 
 ## Install
@@ -52,7 +54,7 @@ cargo install rinex-cli --all-features
 |---------|-------------|
 | `navigation` | `nav` command: P.V.T solutions (GNSS-RTK). The heaviest option. `ppp` is a legacy alias |
 | `cggtts` | `cggtts` command (implies `navigation`) |
-| `ionex` | IONEX inputs: `tec` and `ipp` commands |
+| `ionex` | IONEX: `tec`, `ipp` and `obs2tec` commands |
 | `embed_ephem` | Embeds the ANISE dataset at build time: no Internet access at runtime |
 | `pdf` | PDF reports (Typst engine, embedded fonts) |
 
@@ -171,6 +173,7 @@ part (faster on long sessions). The JSON lines deserialize into `gnss_qc::prelud
 | `combinations` (`comb`) | Signal combinations: Geometry Free, Ionosphere Free, code multipath (`--gf`, `--if`, `--mp`, `--code-only`, `--phase-only`, `-c`, `--receivers`, `--max-gap`, `--jump`). See [signal combinations](documentation/Combinations.md) |
 | `tec` | TEC maps (IONEX): statistics per region (`--region`), temporal interpolation (`--upsample`, `--resample`, `--interpolation`), IONEX synthesis (`--no-ionex`, `--gzip`). See [TEC maps](documentation/TEC.md) |
 | `ipp` | Ionospheric Pierce Points: `--elevation-mask`, `--shell-altitude`, `--orbits`, `-c`. See [pierce points](documentation/IPP.md) |
+| `obs2tec` | TEC from the observations (one receiver or a network): `--interval`, `--grid network\|world\|LAT0,LAT1,LON0,LON1`, `--dlat`, `--dlon`, `--radius`, `--region`, `--point`, `--ionex`, `--gzip`, `-c`, `--receivers`. Uncalibrated (DCB not corrected). See [TEC from the observations](documentation/Obs2Tec.md) |
 | `filegen` | Writes the (preprocessed) products as RINEX / SP3 |
 | `merge FILE` | Merges a file into the product of the same kind |
 | `split EPOCH` | Splits the products at this epoch |

@@ -5,6 +5,10 @@ The `tec` command (`ionex` feature) analyzes the TEC maps of IONEX files: the ve
 Total Electron Content (TECu, 10¹⁶ electrons/m²) over a latitude / longitude grid, map after
 map. It also interpolates the maps in time, to synthesize new IONEX files.
 
+To estimate TEC maps from observations (your own receivers), see the
+[`obs2tec`](Obs2Tec.md) command: the IONEX files it formats are analyzed by `tec` like any
+other IONEX.
+
 ```bash
 cargo install rinex-cli --features ionex,pdf
 ```
